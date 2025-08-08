@@ -1,0 +1,1650 @@
+
+===== FILE: .htaccess =====
+RewriteEngine On
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]
+
+
+===== FILE: all_files.txt =====
+
+
+===== FILE: config.php =====
+<?php
+define('BASE_URL', '/PawCare');
+
+
+===== FILE: index.php =====
+<?php
+require_once 'config.php';
+require_once 'core/Controller.php';
+require_once 'core/Database.php';
+
+$url = isset($_GET['url']) ? explode('/', $_GET['url']) : [];
+
+$controllerName = !empty($url[0]) ? ucfirst($url[0]) . 'Controller' : 'UserController';
+$method = isset($url[1]) ? $url[1] : 'register';
+
+require_once 'app/controllers/' . $controllerName . '.php';
+$controller = new $controllerName();
+$controller->$method();
+
+
+===== FILE: app\controllers\AdminController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AdminController extends Controller
+{
+    /* --- admin-only gate --- */
+    private function guard() {
+        if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+            header("Location: " . BASE_URL . "/Shop/index"); exit;
+        }
+    }
+
+    /* LIST */
+    public function index() {
+        $this->guard();
+        $all = $this->model('Product')->all();
+        $this->view('admin/index', ['products' => $all]);
+    }
+
+    /* ADD */
+    public function add() {
+        $this->guard();
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $this->model('Product')->create($_POST);
+            header("Location: " . BASE_URL . "/Admin/index"); exit;
+        }
+        $this->view('admin/form', ['mode' => 'add']);
+    }
+
+    /* EDIT */
+    public function edit() {
+        $this->guard();
+        /* id may come by GET (first load) or hidden POST (update) */
+        $id = $_GET['id'] ?? ($_POST['id'] ?? null);
+        if (!$id) { header("Location: " . BASE_URL . "/Admin/index"); exit; }
+
+        $pModel = $this->model('Product');
+
+        /* save update */
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $pModel->update($id, $_POST);
+            header("Location: " . BASE_URL . "/Admin/index"); exit;
+        }
+
+        /* load edit form */
+        $prod = $pModel->find($id);
+        $this->view('admin/form', ['mode'=>'edit', 'prod'=>$prod]);
+    }
+
+    /* DELETE  (id by query) */
+    public function delete() {
+        $this->guard();
+        $id = $_GET['id'] ?? null;
+        if ($id) $this->model('Product')->delete($id);
+        header("Location: " . BASE_URL . "/Admin/index"); exit;
+    }
+}
+
+
+===== FILE: app\controllers\AdminOrderController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AdminOrderController extends Controller
+{
+    private function guard()
+    {
+        if (($_SESSION['role'] ?? '') !== 'admin') {
+            header("Location: ".BASE_URL."/Shop/index"); exit;
+        }
+    }
+
+    /* list all orders */
+    public function index()
+    {
+        $this->guard();
+        $orders = $this->model('Order')->all();
+        $this->view('admin/orders', ['orders'=>$orders]);
+    }
+
+    /* mark delivered */
+    public function deliver()
+    {
+        $this->guard();
+        $id = $_GET['id'] ?? null;
+        if ($id) $this->model('Order')->setDelivered($id);
+        header("Location: ".BASE_URL."/AdminOrder/index");
+    }
+}
+
+
+===== FILE: app\controllers\AdminPetController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AdminPetController extends Controller
+{
+    /* --- admin-only gate --- */
+    private function guard()
+    {
+        if (($_SESSION['role'] ?? '') !== 'admin') {
+            header("Location: " . BASE_URL . "/Shop/index");
+            exit;
+        }
+    }
+
+    /* LIST */
+    public function index()
+    {
+        $this->guard();
+        $pets = $this->model('Pet')->all();
+        $this->view('admin/pets', ['pets' => $pets]);
+    }
+
+    /* ADD */
+    public function add()
+    {
+        $this->guard();
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $this->model('Pet')->create($_POST);
+            header("Location: " . BASE_URL . "/AdminPet/index"); exit;
+        }
+        $this->view('admin/pet_form', ['mode' => 'add']);
+    }
+
+    /* EDIT */
+    public function edit()
+    {
+        $this->guard();
+        $id = $_GET['id'] ?? ($_POST['id'] ?? null);
+        if (!$id) { header("Location: " . BASE_URL . "/AdminPet/index"); exit; }
+
+        $pModel = $this->model('Pet');
+
+        /* save update */
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $pModel->update($id, $_POST);
+            header("Location: " . BASE_URL . "/AdminPet/index"); exit;
+        }
+
+        /* load edit form */
+        $pet = $pModel->find($id);
+        $this->view('admin/pet_form', ['mode'=>'edit', 'pet'=>$pet]);
+    }
+
+    /* DELETE */
+    public function delete()
+    {
+        $this->guard();
+        $id = $_GET['id'] ?? null;
+        if ($id) $this->model('Pet')->delete($id);
+        header("Location: " . BASE_URL . "/AdminPet/index"); exit;
+    }
+}
+
+
+===== FILE: app\controllers\CartController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class CartController extends Controller
+{
+    public function add()
+    {
+        $id  = $_GET['id'] ?? null;
+        $qty = max(1, (int)($_POST['qty'] ?? 1));
+        if (!$id) header("Location: ".BASE_URL."/Shop/index");
+        $_SESSION['cart'][$id] = ($_SESSION['cart'][$id] ?? 0) + $qty;
+        header("Location: ".BASE_URL."/shop/index");
+    }
+
+    public function index()
+    {
+        [$items,$total] = $this->cartItems();
+        $this->view('cart/index',['items'=>$items,'total'=>$total]);
+    }
+
+    public function remove()
+    {
+        $id = $_GET['id'] ?? null;
+        unset($_SESSION['cart'][$id]);
+        header("Location: ".BASE_URL."/Cart/index");
+    }
+
+    /*  Checkout: show form → save order */
+    public function checkout()
+    {
+        [$items,$total] = $this->cartItems();
+        if (!$items) { header("Location: ".BASE_URL."/Cart/index"); exit; }
+
+        if ($_SERVER['REQUEST_METHOD']==='POST') {
+            /* turn item list into easy-to-read text */
+            $list = array_map(fn($i)=>$i['name'].' x'.$i['qty'],$items);
+            $itemString = implode(', ', $list);
+
+            $this->model('Order')->create([
+    'user_id' => $_SESSION['user_id'] ?? null,   // ⭐ new
+    'customer'=> $_POST['customer'],
+    'address' => $_POST['address'],
+    'contact' => $_POST['contact'],
+    'items'   => $itemString,
+    'total'   => $total
+]);
+
+            unset($_SESSION['cart']);
+            echo "<script>alert('Order placed! Thank you.');location='".BASE_URL."/Shop/index';</script>";
+            exit;
+        }
+        $this->view('cart/checkout',['items'=>$items,'total'=>$total]);
+    }
+
+    /* -------- helper -------- */
+    private function cartItems()
+    {
+        $cart = $_SESSION['cart'] ?? [];
+        $items=[]; $total=0;
+        if ($cart) {
+            $m = $this->model('Product');
+            foreach ($cart as $pid=>$q) {
+                if ($p=$m->find($pid)) {
+                    $p['qty']=$q; $p['line']=$q*$p['price'];
+                    $items[]=$p;   $total+=$p['line'];
+                }
+            }
+        }
+        return [$items,$total];
+    }
+}
+
+
+===== FILE: app\controllers\OrderController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class OrderController extends Controller
+{
+    /* /Order/index → list current user’s orders */
+    public function index()
+    {
+        if (!isset($_SESSION['user_id'])) {          // not logged-in
+            header("Location: ".BASE_URL."/User/login"); exit;
+        }
+
+        $orders = $this->model('Order')->byUser($_SESSION['user_id']);
+        $this->view('orders/index', ['orders'=>$orders]);
+    }
+}
+
+
+===== FILE: app\controllers\PetController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+
+class PetController extends Controller
+{
+    public function index()
+    {
+        $species = $_GET['species'] ?? null;
+
+        if ($species) {
+            $pets = $this->model('Pet')->bySpecies($species);
+        } else {
+            $pets = $this->model('Pet')->all();
+        }
+
+        $this->view('pet/index', [
+            'pets'    => $pets,
+            'species'=> $species
+        ]);
+    }
+
+    public function detail()
+    {
+        $id = $_GET['id'] ?? null;
+        if (!$id) {
+            header("Location: " . BASE_URL . "/Pet/index");
+            exit;
+        }
+
+        $pet = $this->model('Pet')->find($id);
+        if (!$pet) {
+            header("Location: " . BASE_URL . "/Pet/index");
+            exit;
+        }
+
+        $this->view('pet/detail', ['pet' => $pet]);
+    }
+}
+
+
+===== FILE: app\controllers\ShopController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+
+class ShopController extends Controller
+{
+    /* grid: /Shop/index or /Shop/index?cat=Food */
+    public function index()
+    {
+        $m   = $this->model('Product');
+        $cat = $_GET['cat'] ?? null;
+
+        $this->view('shop/index', [
+            'products' => $cat ? $m->byCategory($cat) : $m->all(),
+            'cat'      => $cat
+        ]);
+    }
+
+    /* detail: /Shop/detail?id=7 */
+    public function detail()
+    {
+        $id = $_GET['id'] ?? null;
+        if (!$id) {                               // no id → go back
+            header("Location: ".BASE_URL."/Shop/index"); exit;
+        }
+
+        $prod = $this->model('Product')->find($id);
+        if (!$prod) {                             // id not found → back
+            header("Location: ".BASE_URL."/Shop/index"); exit;
+        }
+
+        $this->view('shop/detail', ['prod'=>$prod]);
+    }
+}
+
+
+===== FILE: app\controllers\UserController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class UserController extends Controller
+{
+    /* REGISTER */
+    public function register()
+    {
+        if ($_SERVER['REQUEST_METHOD']==='POST') {
+            $id = $this->model('User')->create([
+                'username'=>$_POST['username'],
+                'email'   =>$_POST['email'],
+                'password'=>password_hash($_POST['password'],PASSWORD_DEFAULT),
+                'role'    =>'user'
+            ]);
+
+            $_SESSION['user_id'] = $id;
+            $_SESSION['user']    = $_POST['username'];
+            $_SESSION['role']    = 'user';
+
+            // after sign-up, go straight to welcome
+            header("Location: ".BASE_URL."/User/welcome"); exit;
+        }
+        $this->view('user/register');
+    }
+
+    /* LOGIN */
+    public function login()
+    {
+        if ($_SERVER['REQUEST_METHOD']==='POST') {
+            $u = $this->model('User')->checkLogin($_POST['email']);
+
+            if ($u && password_verify($_POST['password'],$u['password'])) {
+                $_SESSION['user_id'] = $u['id'];
+                $_SESSION['user']    = $u['username'];
+                $_SESSION['role']    = $u['role'];
+
+                // admins go to Admin dashboard, everyone else to welcome
+                $dest = $u['role']==='admin'
+                      ? "/Admin/index"
+                      : "/User/welcome";
+
+                header("Location: ".BASE_URL.$dest); exit;
+            }
+            echo "<p style='color:red;text-align:center'>Invalid credentials</p>";
+        }
+        $this->view('user/login');
+    }
+
+    /* WELCOME PAGE */
+    public function welcome()
+    {
+        if (!isset($_SESSION['user_id'])) {
+            header("Location: ".BASE_URL."/User/login"); exit;
+        }
+        // pass username to view
+        $this->view('user/welcome', ['user'=>$_SESSION['user']]);
+    }
+
+    /* LOGOUT */
+    public function logout()
+    {
+        session_destroy();
+        header("Location: ".BASE_URL."/User/login"); exit;
+    }
+}
+
+
+===== FILE: app\models\Order.php =====
+<?php
+require_once 'core/Database.php';
+
+class Order extends Database
+{
+    /* save a new order */
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO orders (user_id,customer,address,contact,items,total,status)
+             VALUES (?,?,?,?,?,?,'pending')"
+        );
+        $q->execute([
+            $d['user_id'], $d['customer'], $d['address'],
+            $d['contact'], $d['items'], $d['total']
+        ]);
+        return $this->pdo->lastInsertId();
+    }
+
+    /* fetch orders for one user */
+    public function byUser($uid)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT * FROM orders WHERE user_id=? ORDER BY created DESC"
+        );
+        $q->execute([$uid]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /* admin – fetch everyone’s orders */
+    public function all()
+    {
+        return $this->pdo->query(
+            "SELECT * FROM orders ORDER BY created DESC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /* admin – change status */
+    public function setDelivered($id)
+    {
+        $q=$this->pdo->prepare("UPDATE orders SET status='delivered' WHERE id=?");
+        return $q->execute([$id]);
+    }
+}
+
+
+===== FILE: app\models\Pet.php =====
+<?php
+require_once 'core/Database.php';
+
+class Pet extends Database
+{
+    /* -------- READ -------- */
+    public function all()
+    {
+        return $this->pdo
+            ->query("SELECT * FROM pets ORDER BY id DESC")
+            ->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function bySpecies($species)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT * FROM pets 
+             WHERE LOWER(species)=LOWER(?) 
+             ORDER BY id DESC"
+        );
+        $q->execute([$species]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function find($id)
+    {
+        $q = $this->pdo->prepare("SELECT * FROM pets WHERE id=?");
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+
+    /* -------- CREATE -------- */
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO pets
+               (name, species, age, breed, vaccinated, adopted,
+                image, story, phone, email, foster_home)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+        );
+        return $q->execute([
+            $d['name'],
+            $d['species'],
+            $d['age'],
+            $d['breed'],
+            $d['vaccinated'],
+            $d['adopted'],
+            $d['image'],
+            $d['story'],
+            $d['phone'],
+            $d['email'],
+            $d['foster_home']
+        ]);
+    }
+
+    /* -------- UPDATE -------- */
+    public function update($id, $d)
+    {
+        $q = $this->pdo->prepare(
+            "UPDATE pets SET
+                name=?, species=?, age=?, breed=?, vaccinated=?,
+                adopted=?, image=?, story=?, phone=?, email=?,
+                foster_home=?
+             WHERE id=?"
+        );
+        return $q->execute([
+            $d['name'],
+            $d['species'],
+            $d['age'],
+            $d['breed'],
+            $d['vaccinated'],
+            $d['adopted'],
+            $d['image'],
+            $d['story'],
+            $d['phone'],
+            $d['email'],
+            $d['foster_home'],
+            $id
+        ]);
+    }
+
+    /* -------- DELETE -------- */
+    public function delete($id)
+    {
+        $q = $this->pdo->prepare("DELETE FROM pets WHERE id=?");
+        return $q->execute([$id]);
+    }
+}
+
+
+===== FILE: app\models\Product.php =====
+<?php
+require_once 'core/Database.php';
+
+class Product extends Database
+{
+    /* READ */
+    public function all()             { return $this->pdo->query("SELECT * FROM products")->fetchAll(PDO::FETCH_ASSOC); }
+    public function byCategory($c)    {
+        $q = $this->pdo->prepare("SELECT * FROM products WHERE LOWER(category) = LOWER(?)");
+        $q->execute([$c]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+    public function find($id)         { $q=$this->pdo->prepare("SELECT * FROM products WHERE id=?"); $q->execute([$id]); return $q->fetch(PDO::FETCH_ASSOC); }
+
+    /* CREATE */
+    public function create($d) {
+        $q = $this->pdo->prepare("INSERT INTO products (name,category,price,image,description) VALUES (?,?,?,?,?)");
+        return $q->execute([$d['name'],$d['category'],$d['price'],$d['image'],$d['description']]);
+    }
+
+    /* UPDATE */
+    public function update($id,$d) {
+        $q = $this->pdo->prepare("UPDATE products SET name=?,category=?,price=?,image=?,description=? WHERE id=?");
+        return $q->execute([$d['name'],$d['category'],$d['price'],$d['image'],$d['description'],$id]);
+    }
+
+    /* DELETE */
+    public function delete($id) {
+        $q = $this->pdo->prepare("DELETE FROM products WHERE id=?");
+        return $q->execute([$id]);
+    }
+}
+
+
+===== FILE: app\models\User.php =====
+<?php
+require_once 'core/Database.php';
+
+class User extends Database
+{
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO users (username,email,password,role) VALUES (?,?,?,?)"
+        );
+        $q->execute([
+            $d['username'],
+            $d['email'],
+            $d['password'],
+            $d['role'] ?? 'user'
+        ]);
+        return $this->pdo->lastInsertId();       // ⭐ new
+    }
+
+    public function checkLogin($email)
+    {
+        $q = $this->pdo->prepare("SELECT * FROM users WHERE email=?");
+        $q->execute([$email]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+}
+
+
+===== FILE: app\views\admin\form.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title><?=($data['mode']=='add'?'Add':'Edit')?> Product</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:1rem}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);width:420px;padding:36px}
+h2{color:#41403e;font-size:1.6rem;font-weight:600;margin-bottom:1.3rem;text-align:center}
+label{display:block;font-weight:600;color:#41403e;margin-top:14px;font-size:.95rem}
+input,textarea,select{width:100%;padding:.75rem 1rem;border:2px solid #e9e7e6;border-radius:10px;margin-top:.35rem;font-size:.9rem}
+input:focus,textarea:focus,select:focus{border-color:#26c1a8;outline:none}
+button{margin-top:22px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.9rem;font-weight:600;font-size:1rem;border-radius:10px;cursor:pointer;transition:.3s background}
+button:hover{background:#1ea893}
+</style></head><body>
+  
+<div class="card">
+    <h2><?=($data['mode']=='add'?'Add':'Edit')?> Product</h2>
+    <?php
+        /* defaults when adding */
+        $p = $data['mode']=='edit' ? $data['prod']
+                                   : ['id'=>'','name'=>'','price'=>'','image'=>'','description'=>'','category'=>'Food'];
+        /* form action: keep id in query for GET + hidden for POST */
+        $action = $data['mode']=='add'
+                  ? BASE_URL.'/Admin/add'
+                  : BASE_URL.'/Admin/edit?id='.$p['id'];
+    ?>
+    <form method="POST" action="<?=$action?>">
+        <?php if($data['mode']=='edit'): ?>
+            <input type="hidden" name="id" value="<?=$p['id']?>">
+        <?php endif; ?>
+
+        <label>Name</label>
+        <input type="text" name="name" value="<?=htmlspecialchars($p['name'])?>" required>
+
+        <label>Category</label>
+        <select name="category">
+            <?php foreach(['Food','Medicine','Toy','Accessories'] as $c): ?>
+                <option value="<?=$c?>" <?=$p['category']===$c?'selected':''?>><?=$c?></option>
+            <?php endforeach;?>
+        </select>
+
+        <label>Price (USD)</label>
+        <input type="number" step="0.01" name="price" value="<?=$p['price']?>" required>
+
+        <label>Image URL</label>
+        <input type="text" name="image" value="<?=htmlspecialchars($p['image'])?>" required>
+
+        <label>Description</label>
+        <textarea name="description" rows="3" required><?=htmlspecialchars($p['description'])?></textarea>
+
+        <button type="submit"><?=$data['mode']=='add'?'Save':'Update'?></button>
+    </form>
+</div>
+</body></html>
+
+
+===== FILE: app\views\admin\index.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Admin • Products</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{font-size:2rem;font-weight:600;color:#41403e;margin-bottom:1.6rem;text-align:center}
+a.btn{background:#26c1a8;color:#fff;text-decoration:none;padding:10px 22px;border-radius:10px;font-weight:600}
+a.btn:hover{background:#1ea893}
+table{width:100%;margin-top:20px;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:14px 16px;font-size:.9rem}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+.actions a{margin-right:10px;color:#ff8552;text-decoration:none;font-weight:600}
+.actions a:hover{color:#e4713f}
+</style></head><body>
+  <?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>🐾 Admin Dashboard – Products</h1>
+<div style="text-align:right"><a class="btn" href="<?=BASE_URL?>/Admin/add">+ Add Product</a></div>
+
+<table>
+<thead><tr><th>ID</th><th>Name</th><th>Cat.</th><th>Price</th><th style="width:22%">Actions</th></tr></thead>
+<tbody>
+<?php foreach($data['products'] as $p): ?>
+<tr>
+    <td><?=$p['id']?></td>
+    <td><?=htmlspecialchars($p['name'])?></td>
+    <td><?=$p['category']?></td>
+    <td>$<?=number_format($p['price'],2)?></td>
+    <td class="actions">
+        <!-- now uses ?id= to pass product id -->
+        <a href="<?=BASE_URL?>/Admin/edit?id=<?=$p['id']?>">Edit</a>
+        <a href="<?=BASE_URL?>/Admin/delete?id=<?=$p['id']?>" onclick="return confirm('Delete this product?')">Delete</a>
+    </td>
+</tr>
+<?php endforeach;?>
+</tbody>
+</table>
+</body></html>
+
+
+===== FILE: app\views\admin\orders.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>All Orders • Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{text-align:center;margin:90px 0 1.6rem;font-size:2rem;font-weight:600;color:#41403e}
+table{width:100%;background:#fff;border-collapse:collapse;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:14px 16px;font-size:.9rem}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+a.dbtn{color:#ff8552;text-decoration:none;font-weight:600}
+a.dbtn:hover{color:#e4713f}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>All Orders</h1>
+
+<table>
+<thead><tr>
+  <th>ID</th><th>User&nbsp;ID</th><th>Date</th><th>Items</th>
+  <th>Total</th><th>Status</th><th>Action</th>
+</tr></thead>
+<tbody>
+<?php foreach($orders as $o): ?>
+<tr>
+  <td><?=$o['id']?></td>
+  <td><?=$o['user_id']?></td>
+  <td><?=date('Y-m-d H:i', strtotime($o['created']))?></td>
+  <td style="width:30%"><?=htmlspecialchars($o['items'])?></td>
+  <td>$<?=number_format($o['total'],2)?></td>
+  <td><?=$o['status']?></td>
+  <td>
+    <?php if($o['status']==='pending'): ?>
+       <a class="dbtn" href="<?=BASE_URL?>/AdminOrder/deliver?id=<?=$o['id']?>">Mark&nbsp;Delivered</a>
+    <?php endif;?>
+  </td>
+</tr>
+<?php endforeach;?>
+</tbody>
+</table>
+</body></html>
+
+
+===== FILE: app\views\admin\pets.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Admin • Pets</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{font-size:2rem;font-weight:600;color:#41403e;margin-bottom:1.6rem;text-align:center}
+a.btn{background:#26c1a8;color:#fff;text-decoration:none;padding:10px 22px;border-radius:10px;font-weight:600}
+a.btn:hover{background:#1ea893}
+table{width:100%;margin-top:20px;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:14px 16px;font-size:.9rem}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+.status{font-weight:600}
+.available{color:#26c1a8}
+.adopted{color:#aaa}
+.actions a{margin-right:10px;color:#ff8552;text-decoration:none;font-weight:600}
+.actions a:hover{color:#e4713f}
+img.thumb{height:40px;width:40px;object-fit:cover;border-radius:50%}
+/* contact cell */
+.contact{font-size:.85rem;line-height:1.3;color:#41403e}
+.contact .addr{font-size:.78rem;color:#777}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>🐾 Admin Dashboard – Pets</h1>
+<div style="text-align:right"><a class="btn" href="<?=BASE_URL?>/AdminPet/add">+ Add Pet</a></div>
+
+<table>
+<thead>
+  <tr>
+    <th>ID</th><th>Photo</th><th>Name</th><th>Species</th>
+    <th>Breed</th><th>Contact Details</th><th>Status</th><th style="width:22%">Actions</th>
+  </tr>
+</thead>
+<tbody>
+<?php foreach($pets as $p): ?>
+<tr>
+  <td><?=$p['id']?></td>
+  <td><img class="thumb" src="<?=htmlspecialchars($p['image'])?>" alt=""></td>
+  <td><?=htmlspecialchars($p['name'])?></td>
+  <td><?=htmlspecialchars($p['species'])?></td>
+  <td><?=htmlspecialchars($p['breed'])?></td>
+
+  <td class="contact">
+    <?=htmlspecialchars($p['phone'] ?: '—')?><br>
+    <?=htmlspecialchars($p['email'] ?: '—')?><br>
+    <span class="addr"><?=htmlspecialchars($p['foster_home'] ?: '')?></span>
+  </td>
+
+  <td class="status <?=$p['adopted']?'adopted':'available'?>">
+    <?=$p['adopted']?'Adopted':'Available'?>
+  </td>
+
+  <td class="actions">
+    <a href="<?=BASE_URL?>/AdminPet/edit?id=<?=$p['id']?>">Edit</a>
+    <a href="<?=BASE_URL?>/AdminPet/delete?id=<?=$p['id']?>" onclick="return confirm('Delete this pet?')">Delete</a>
+  </td>
+</tr>
+<?php endforeach;?>
+</tbody>
+</table>
+</body></html>
+
+
+===== FILE: app\views\admin\pet_form.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<title><?=($data['mode']=='add'?'Add':'Edit')?> Pet</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:1rem}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);width:420px;padding:36px}
+h2{color:#41403e;font-size:1.6rem;font-weight:600;margin-bottom:1.3rem;text-align:center}
+label{display:block;font-weight:600;color:#41403e;margin-top:14px;font-size:.95rem}
+input,textarea,select{width:100%;padding:.75rem 1rem;border:2px solid #e9e7e6;border-radius:10px;margin-top:.35rem;font-size:.9rem}
+input:focus,textarea:focus,select:focus{border-color:#26c1a8;outline:none}
+button{margin-top:22px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.9rem;font-weight:600;font-size:1rem;border-radius:10px;cursor:pointer;transition:.3s background}
+button:hover{background:#1ea893}
+.section-title{margin-top:20px;font-weight:600;color:#41403e;font-size:1rem}
+.contact-box{background:#fafafa;border:1px solid #e9e7e6;border-radius:10px;padding:18px;margin-top:10px}
+.contact-box label:first-child{margin-top:0}
+</style></head><body>
+
+<div class="card">
+  <h2><?=($data['mode']=='add'?'Add':'Edit')?> Pet</h2>
+<?php
+  $p = $data['mode']=='edit' ? $data['pet']
+                             : ['id'=>'','name'=>'','species'=>'Dog','age'=>'','breed'=>'',
+                                'vaccinated'=>1,'adopted'=>0,'image'=>'','story'=>'',
+                                'phone'=>'','email'=>'','foster_home'=>''];
+  $action = $data['mode']=='add'
+            ? BASE_URL.'/AdminPet/add'
+            : BASE_URL.'/AdminPet/edit?id='.$p['id'];
+?>
+  <form method="POST" action="<?=$action?>">
+    <?php if($data['mode']=='edit'): ?>
+      <input type="hidden" name="id" value="<?=$p['id']?>">
+    <?php endif; ?>
+
+    <label>Species</label>
+    <select name="species">
+      <option value="Dog"  <?=$p['species']==='Dog'?'selected':''?>>Dog</option>
+      <option value="Cat"  <?=$p['species']==='Cat'?'selected':''?>>Cat</option>
+    </select>
+
+    <label>Name</label>
+    <input type="text" name="name" value="<?=htmlspecialchars($p['name'])?>" required>
+
+    <label>Age</label>
+    <input type="text" name="age" value="<?=htmlspecialchars($p['age'])?>" required>
+
+    <label>Breed</label>
+    <input type="text" name="breed" value="<?=htmlspecialchars($p['breed'])?>" required>
+
+    <label>Vaccinated</label>
+    <select name="vaccinated">
+      <option value="1" <?=$p['vaccinated']?'selected':''?>>Yes</option>
+      <option value="0" <?=!$p['vaccinated']?'selected':''?>>No</option>
+    </select>
+
+    <label>Adopted</label>
+    <select name="adopted">
+      <option value="0" <?=$p['adopted']?'':'selected'?>>Available</option>
+      <option value="1" <?=$p['adopted']?'selected':''?>>Adopted</option>
+    </select>
+
+    <label>Image URL</label>
+    <input type="text" name="image" value="<?=htmlspecialchars($p['image'])?>" required>
+
+    <label>Story</label>
+    <textarea name="story" rows="3" required><?=htmlspecialchars($p['story'])?></textarea>
+
+    <div class="section-title">Contact Details</div>
+    <div class="contact-box">
+      <label>Phone</label>
+      <input type="text" name="phone" value="<?=htmlspecialchars($p['phone'])?>">
+
+      <label>Email</label>
+      <input type="email" name="email" value="<?=htmlspecialchars($p['email'])?>">
+
+      <label>Foster Home Address</label>
+      <input type="text" name="foster_home" value="<?=htmlspecialchars($p['foster_home'])?>">
+    </div>
+
+    <button type="submit"><?=$data['mode']=='add'?'Save':'Update'?></button>
+  </form>
+</div>
+</body></html>
+
+
+===== FILE: app\views\cart\checkout.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Checkout • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:1rem}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);width:460px;padding:36px}
+h2{color:#41403e;font-size:1.6rem;font-weight:600;margin-bottom:1.1rem;text-align:center}
+label{display:block;font-weight:600;color:#41403e;margin-top:14px;font-size:.95rem}
+input,textarea{width:100%;padding:.75rem 1rem;border:2px solid #e9e7e6;border-radius:10px;margin-top:.35rem;font-size:.9rem}
+input:focus,textarea:focus{border-color:#26c1a8;outline:none}
+.item-summary{background:#fafafa;border:1px solid #e0dedc;border-radius:10px;padding:12px;margin-top:10px;font-size:.9rem;color:#555;line-height:1.4}
+.item-summary-title{font-weight:700;color:#41403e;margin-top:14px;font-size:.95rem}
+.total{margin-top:18px;font-weight:700;color:#ff8552;font-size:1.05rem;text-align:right}
+button{margin-top:22px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.9rem;font-weight:600;font-size:1rem;border-radius:10px;cursor:pointer;transition:.3s}
+button:hover{background:#1ea893}
+</style></head><body>
+
+
+<div class="card" style="margin-top:80px">
+  <h2>Delivery Details</h2>
+
+  <!-- 🐾 Order items heading -->
+  <div class="item-summary-title">Order Items</div>
+  <div class="item-summary">
+    <?php foreach($items as $i): ?>
+        • <?=htmlspecialchars($i['name'])?> — <?=$i['qty']?> item(s)<br>
+    <?php endforeach;?>
+  </div>
+
+  <form method="POST">
+      <label>Name</label>
+      <input type="text" name="customer" required>
+
+      <label>Address</label>
+      <textarea name="address" rows="3" required></textarea>
+
+      <label>Contact&nbsp;No.</label>
+      <input type="text" name="contact" required>
+
+      <div class="total">Total&nbsp;$<?=number_format($total,2)?></div>
+
+      <button type="submit">Confirm Order</button>
+  </form>
+</div>
+</body></html>
+
+
+===== FILE: app\views\cart\index.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Your Cart • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{text-align:center;font-size:2rem;font-weight:600;color:#41403e;margin:90px 0 1.6rem}
+table{width:100%;background:#fff;border-collapse:collapse;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:14px 16px;font-size:.9rem}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+.total{font-weight:700;color:#ff8552;text-align:right;padding-top:18px}
+a.btn{display:inline-block;background:#26c1a8;color:#fff;text-decoration:none;padding:12px 28px;border-radius:10px;font-weight:600;margin-top:20px}
+a.btn:hover{background:#1ea893}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>Your Cart</h1>
+
+<?php if(!$data['items']): ?>
+   <p style="text-align:center;color:#555">Your cart is empty.</p>
+<?php else: ?>
+<table>
+<thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Line</th><th></th></tr></thead>
+<tbody>
+   <?php foreach($data['items'] as $i): ?>
+      <tr>
+        <td><?=htmlspecialchars($i['name'])?></td>
+        <td><?=$i['qty']?></td>
+        <td>$<?=number_format($i['price'],2)?></td>
+        <td>$<?=number_format($i['line'],2)?></td>
+        <td><a style="color:#ff8552;text-decoration:none;font-weight:600" href="<?=BASE_URL?>/Cart/remove?id=<?=$i['id']?>">Remove</a></td>
+      </tr>
+   <?php endforeach;?>
+</tbody>
+</table>
+
+<div class="total">Total  $<?=number_format($data['total'],2)?></div>
+<div style="text-align:right"><<a class="btn" href="<?=BASE_URL?>/Cart/checkout">Checkout</a></div>
+<?php endif;?>
+</body></html>
+
+
+===== FILE: app\views\orders\index.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>My Orders • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{text-align:center;font-size:2rem;font-weight:600;color:#41403e;margin:90px 0 1.6rem}
+table{width:100%;background:#fff;border-collapse:collapse;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:14px 16px;font-size:.9rem}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+.empty{color:#555;text-align:center;margin-top:40px}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>My Orders</h1>
+
+<?php if(!$orders): ?>
+   <p class="empty">You haven’t placed any orders yet.</p>
+<?php else: ?>
+<table>
++ <thead><tr><th>ID</th><th>Date</th><th>Items</th><th>Total</th><th>Status</th></tr></thead>
+
+<tbody>
+<?php foreach($orders as $o): ?>
+   <tr>
+      <td><?=$o['id']?></td>
+      <td><?=date('Y-m-d H:i', strtotime($o['created']))?></td>
+      <td><?=htmlspecialchars($o['items'])?></td>
+       <td>$<?=number_format($o['total'],2)?></td>
+   <td><?=$o['status']?></td>
+   </tr>
+<?php endforeach;?>
+</tbody>
+</table>
+<?php endif;?>
+</body></html>
+
+
+===== FILE: app\views\partials\nav.php =====
+<?php if (session_status() === PHP_SESSION_NONE) session_start(); ?>
+<style>
+.nav-bar{
+    background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.05);
+    padding:14px 6%;display:flex;justify-content:space-between;align-items:center;
+    font-family:'Quicksand',sans-serif
+}
+.nav-brand{font-weight:700;color:#26c1a8;text-decoration:none;font-size:1.2rem}
+.nav-links a{
+    margin-left:22px;color:#41403e;text-decoration:none;font-weight:600;font-size:.95rem;
+    transition:.2s
+}
+.nav-links a:hover{color:#ff8552}
+</style>
+
+<div class="nav-bar">
+   <a class="nav-brand" href="<?=BASE_URL?>/User/welcome">🐾 PawCare</a>
+
+   <div class="nav-links">
+        <!-- always show Shop & Pets -->
+        <a href="<?=BASE_URL?>/Shop/index">Shop</a>
+        <a href="<?=BASE_URL?>/Pet/index">Pets</a>
+
+        <?php
+          $isAdmin = ($_SESSION['role'] ?? '') === 'admin';
+          $logged  = isset($_SESSION['user_id']);
+        ?>
+
+        <!-- regular users: My Orders -->
+        <?php if($logged && !$isAdmin): ?>
+            <a href="<?=BASE_URL?>/Order/index">My Orders</a>
+        <?php endif; ?>
+
+        <!-- admin-only links -->
+        <?php if($isAdmin): ?>
+            <a href="<?=BASE_URL?>/Admin/index">Products</a>
+            <a href="<?=BASE_URL?>/AdminPet/index">PetInfo</a>
+            <a href="<?=BASE_URL?>/AdminOrder/index">Orders</a>
+        <?php endif; ?>
+
+        <!-- Cart only for non-admin users -->
+        <?php if(!$isAdmin): ?>
+            <a href="<?=BASE_URL?>/Cart/index">Cart (<?=array_sum($_SESSION['cart'] ?? [])?>)</a>
+        <?php endif; ?>
+
+        <!-- Login / Logout -->
+        <?php if($logged): ?>
+            <a href="<?=BASE_URL?>/User/logout">Logout</a>
+        <?php else: ?>
+            <a href="<?=BASE_URL?>/User/login">Login</a>
+        <?php endif; ?>
+   </div>
+</div>
+
+
+===== FILE: app\views\pet\detail.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<title><?=htmlspecialchars($pet['name'])?> • Pet Profile</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+.card{
+    max-width:880px;margin:auto;background:#fff;border-radius:16px;
+    box-shadow:0 8px 18px rgba(0,0,0,.08);display:flex;overflow:hidden
+}
+.card img{width:50%;object-fit:cover}
+.info{padding:36px;width:50%}
+h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
+.item{margin-bottom:12px;font-size:.95rem;color:#555}
+.label{font-weight:600;color:#41403e}
+.status{
+    margin-top:16px;display:inline-block;font-weight:600;padding:8px 14px;
+    border-radius:8px;font-size:.9rem;color:#fff
+}
+.adopted{background:#aaa}
+.available{background:#26c1a8}
+
+/* NEW – keep Story formatting */
+.story{
+    white-space:pre-wrap;           /* preserves spaces & new lines */
+    line-height:1.45;
+    margin-top:6px;color:#555
+}
+
+@media(max-width:760px){
+    .card{flex-direction:column}
+    .card img,.info{width:100%}
+}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="card" style="margin-top:90px">
+    <img src="<?=htmlspecialchars($pet['image'])?>" alt="">
+    <div class="info">
+        <h2><?=htmlspecialchars($pet['name'])?></h2>
+
+        <div class="item"><span class="label">Age:</span> <?=htmlspecialchars($pet['age'])?></div>
+        <div class="item"><span class="label">Breed:</span> <?=htmlspecialchars($pet['breed'])?></div>
+        <div class="item"><span class="label">Vaccinated:</span> <?=$pet['vaccinated'] ? 'Yes' : 'No'?></div>
+
+        <div class="item"><span class="label">Foster&nbsp;Home&nbsp;Address:</span> <?=htmlspecialchars($pet['foster_home']) ?: '—'?></div>
+        <div class="item"><span class="label">Phone:</span> <?=htmlspecialchars($pet['phone']) ?: '—'?></div>
+        <div class="item"><span class="label">Email:</span> <?=htmlspecialchars($pet['email']) ?: '—'?></div>
+
+        <!-- Story with preserved formatting -->
+        <div class="item">
+            <span class="label">Story:</span>
+            <div class="story"><?=nl2br(htmlspecialchars($pet['story']))?></div>
+        </div>
+
+        <div class="status <?=$pet['adopted'] ? 'adopted' : 'available'?>">
+            <?=$pet['adopted'] ? 'Adopted' : 'Available'?>
+        </div>
+    </div>
+</div>
+</body></html>
+
+
+===== FILE: app\views\pet\index.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Pets for Adoption • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+h1{text-align:center;font-size:2rem;font-weight:600;color:#41403e;margin:1.6rem 0}
+.filters{text-align:center;margin-bottom:2rem}
+.filters a{color:#26c1a8;text-decoration:none;font-weight:600;margin:0 .6rem;font-size:.95rem;transition:.2s}
+.filters a:hover{color:#1b907d}
+.filters .active{color:#ff8552}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:24px}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);overflow:hidden;transition:.25s}
+.card:hover{transform:translateY(-6px)}
+.card img{width:100%;height:180px;object-fit:cover}
+.card-body{padding:16px}
+.name{font-weight:600;font-size:1.1rem;color:#41403e}
+.status{margin-top:8px;color:#fff;font-weight:600;padding:6px 10px;border-radius:8px;display:inline-block;font-size:.8rem}
+.adopted{background:#aaa}
+.available{background:#26c1a8}
+a.card-link{text-decoration:none}
+</style>
+</head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>🐾 Pets for Adoption</h1>
+<div class="filters">
+  <a href="<?=BASE_URL?>/Pet/index"            class="<?=!$species ? 'active':''?>">All</a>
+  <a href="<?=BASE_URL?>/Pet/index?species=Dog" class="<?=$species==='Dog'?'active':''?>">Dogs</a>
+  <a href="<?=BASE_URL?>/Pet/index?species=Cat" class="<?=$species==='Cat'?'active':''?>">Cats</a>
+</div>
+
+<div class="grid">
+<?php foreach($pets as $p): ?>
+  <a class="card-link" href="<?=BASE_URL?>/Pet/detail?id=<?=$p['id']?>">
+    <div class="card">
+      <img src="<?=htmlspecialchars($p['image'])?>" alt="">
+      <div class="card-body">
+        <div class="name"><?=htmlspecialchars($p['name'])?></div>
+        <div class="status <?=$p['adopted'] ? 'adopted' : 'available'?>">
+          <?=$p['adopted'] ? 'Adopted' : 'Available'?>
+        </div>
+      </div>
+    </div>
+  </a>
+<?php endforeach; ?>
+</div>
+</body></html>
+
+
+===== FILE: app\views\shop\detail.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title><?=htmlspecialchars($prod['name'])?> • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);display:flex;overflow:hidden;max-width:920px;margin:auto}
+.card img{width:50%;object-fit:cover}
+.info{padding:36px 40px;width:50%;display:flex;flex-direction:column}
+h2{font-size:1.8rem;font-weight:600;color:#41403e;margin-bottom:.8rem}
+.price{color:#ff8552;font-size:1.2rem;font-weight:700;margin-bottom:1rem}
+.desc{color:#555;font-size:.95rem;line-height:1.4;flex:1}
+form{margin-top:18px}
+input[type=number]{width:70px;padding:.5rem;border:2px solid #e9e7e6;border-radius:8px;font-size:.95rem;margin-right:12px}
+button{background:#26c1a8;color:#fff;border:none;padding:.65rem 22px;font-weight:600;border-radius:10px;cursor:pointer;transition:.3s}
+button:hover{background:#1ea893}
+@media(max-width:760px){.card{flex-direction:column}.card img,.info{width:100%}}
+</style></head><body>
+<?php include_once __DIR__.'/../partials/nav.php'; ?>
+
+<div class="card" style="margin-top:90px">
+    <img src="<?=htmlspecialchars($prod['image'])?>" alt="">
+    <div class="info">
+        <h2><?=htmlspecialchars($prod['name'])?></h2>
+        <div class="price">$<?=number_format($prod['price'],2)?></div>
+        <div class="desc"><?=htmlspecialchars($prod['description'])?></div>
+
+        <form method="POST" action="<?=BASE_URL?>/Cart/add?id=<?=$prod['id']?>">
+            <input type="number" name="qty" value="1" min="1">
+            <button type="submit">Add to Cart</button>
+        </form>
+    </div>
+</div>
+</body></html>
+
+
+===== FILE: app\views\shop\index.php =====
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PawCare • Pet Shop</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+
+    <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+        h1{font-size:2.1rem;font-weight:600;color:#41403e;text-align:center;margin:1.6rem 0}
+
+        .filters{text-align:center;margin-bottom:2rem}
+        .filters a{color:#26c1a8;text-decoration:none;font-weight:600;margin:0 .6rem;font-size:.95rem;transition:.2s}
+        .filters a:hover{color:#1b907d}
+        .filters .active{color:#ff8552}
+
+        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:24px}
+        .card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);display:flex;flex-direction:column;overflow:hidden;transition:.25s}
+        .card:hover{transform:translateY(-6px)}
+        .card img{width:100%;height:150px;object-fit:cover}
+        .category-tag{position:absolute;top:12px;left:12px;background:#26c1a8;color:#fff;font-size:.75rem;font-weight:600;padding:4px 8px;border-radius:12px}
+        .card-wrap{position:relative}
+        .card-body{padding:18px 20px}
+        .name{font-weight:600;color:#41403e;font-size:1.05rem;margin-bottom:.4rem}
+        .price{color:#ff8552;font-weight:700;font-size:1rem}
+        a.card-link{text-decoration:none}
+    </style>
+</head>
+<body>
+<?php include_once __DIR__.'/../partials/nav.php'; ?> <!-- fixed path -->
+
+<h1>🐾 PawCare Shop</h1>
+
+<div class="filters">
+<?php
+$cats=['All','Food','Medicine','Toy','Accessories'];
+foreach($cats as $c){
+    $act=($data['cat']===$c || ($c==='All' && !$data['cat']));
+    $url=$c==='All'?BASE_URL.'/Shop/index':BASE_URL.'/Shop/index?cat='.$c;
+    echo '<a href="'.$url.'" class="'.($act?'active':'').'">'.$c.'</a>';
+}
+?>
+</div>
+
+<div class="grid">
+<?php foreach($data['products'] as $p): ?>
+ <a class="card-link" href="<?=BASE_URL?>/Shop/detail?id=<?=$p['id']?>">
+
+
+   <div class="card">
+      <div class="card-wrap">
+         <span class="category-tag"><?=$p['category']?></span>
+         <img src="<?=htmlspecialchars($p['image'])?>" alt="<?=htmlspecialchars($p['name'])?>">
+      </div>
+      <div class="card-body">
+         <div class="name"><?=htmlspecialchars($p['name'])?></div>
+         <div class="price">$<?=number_format($p['price'],2)?></div>
+      </div>
+   </div>
+ </a>
+<?php endforeach; ?>
+</div>
+</body>
+</html>
+
+
+===== FILE: app\views\user\login.php =====
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PawCare • Log In</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+
+    <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{
+            font-family:'Quicksand',sans-serif;
+            background:linear-gradient(135deg,#fff 0%,#f0faf6 100%);
+            display:flex;justify-content:center;align-items:center;
+            min-height:100vh;padding:1rem;
+        }
+        a{color:#26c1a8;text-decoration:none;font-size:0.9rem}
+        a:hover{text-decoration:underline}
+
+        .card{
+            background:#ffffff;border-radius:18px;
+            box-shadow:0 10px 25px rgba(0,0,0,0.08);
+            display:flex;max-width:860px;overflow:hidden;width:100%;
+        }
+        .card img{width:50%;object-fit:cover}
+
+        .form-wrap{
+            padding:3rem 3.5rem;width:50%;
+            display:flex;flex-direction:column;justify-content:center;
+        }
+        h1{color:#41403e;font-size:1.9rem;font-weight:600;margin-bottom:1.8rem;display:flex;gap:.5rem;align-items:center}
+        h1 span{font-size:2rem}
+
+        label{color:#41403e;font-weight:600;font-size:0.93rem;margin-bottom:.4rem;display:block}
+        input{
+            width:100%;padding:.8rem 1rem;margin-bottom:1.4rem;
+            border:2px solid #e9e7e6;border-radius:10px;font-size:.95rem;transition:.25s border;
+        }
+        input:focus{border-color:#26c1a8;outline:none}
+
+        button{
+            background:#ff8552;color:#fff;border:none;width:100%;
+            padding:.95rem;font-size:1rem;font-weight:600;border-radius:10px;
+            cursor:pointer;transition:.3s background;
+        }
+        button:hover{background:#e4713f}
+
+        .switch{margin-top:1.4rem;text-align:center;color:#666}
+
+        @media(max-width:720px){
+            .card{flex-direction:column;max-width:420px}
+            .card img{display:none}
+            .form-wrap{width:100%;padding:2.2rem}
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <!-- New cute cat photo -->
+        <img src="https://img.freepik.com/free-photo/view-cats-dogs-being-friends_23-2151806276.jpg?semt=ais_hybrid&w=740" alt="Playful kitten">
+
+        <div class="form-wrap">
+            <h1><span>🐾</span>Welcome Back</h1>
+
+            <form method="POST" action="">
+                <label>Email</label>
+                <input type="email" name="email" required>
+
+                <label>Password</label>
+                <input type="password" name="password" required>
+
+                <button type="submit">Log In</button>
+            </form>
+
+            <p class="switch">
+                Don’t have an account?
+                <a href="<?php echo BASE_URL; ?>/User/register">Sign up</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+
+
+===== FILE: app\views\user\register.php =====
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PawCare • Sign Up</title>
+
+    <!-- Google Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+
+    <style>
+        *{box-sizing:border-box;margin:0;padding:0}
+        body{
+            font-family:'Quicksand',sans-serif;
+            background:linear-gradient(135deg,#f0faf6 0%,#fff 100%);
+            display:flex;justify-content:center;align-items:center;
+            min-height:100vh;padding:1rem;
+        }
+        a{color:#ff8552;text-decoration:none;font-size:0.9rem}
+        a:hover{text-decoration:underline}
+
+        /* Card */
+        .card{
+            background:#ffffff;border-radius:18px;
+            box-shadow:0 10px 25px rgba(0,0,0,0.08);
+            display:flex;max-width:860px;overflow:hidden;width:100%;
+        }
+        .card img{width:50%;object-fit:cover}
+
+        /* Form side */
+        .form-wrap{
+            padding:3rem 3.5rem;width:50%;
+            display:flex;flex-direction:column;justify-content:center;
+        }
+        h1{color:#41403e;font-size:1.9rem;font-weight:600;margin-bottom:1.8rem;display:flex;gap:.5rem;align-items:center}
+        h1 span{font-size:2rem}
+
+        label{display:block;margin-bottom:.4rem;color:#41403e;font-weight:600;font-size:0.93rem}
+        input{
+            width:100%;padding:.8rem 1rem;margin-bottom:1.4rem;
+            border:2px solid #e9e7e6;border-radius:10px;font-size:.95rem;transition:.25s border;
+        }
+        input:focus{border-color:#ff8552;outline:none}
+
+        button{
+            background:#26c1a8;color:#fff;border:none;width:100%;
+            padding:.95rem;font-size:1rem;font-weight:600;border-radius:10px;
+            cursor:pointer;transition:.3s background;
+        }
+        button:hover{background:#1ea893}
+
+        .switch{margin-top:1.4rem;text-align:center;color:#666}
+
+        @media(max-width:720px){
+            .card{flex-direction:column;max-width:420px}
+            .card img{display:none}
+            .form-wrap{width:100%;padding:2.2rem}
+        }
+    </style>
+</head>
+<body>
+    
+
+    <div class="card">
+        <!-- New cute dog photo -->
+        <img src="https://i.ebayimg.com/images/g/9jkAAOSwjh5bIr7m/s-l1200.jpg" alt="Happy puppy">
+
+        <div class="form-wrap">
+            <h1><span>🐾</span>Create Account</h1>
+
+            <form method="POST" action="">
+                <label>Username</label>
+                <input type="text" name="username" required>
+
+                <label>Email</label>
+                <input type="email" name="email" required>
+
+                <label>Password</label>
+                <input type="password" name="password" required>
+
+                <button type="submit">Sign Up</button>
+            </form>
+
+            <p class="switch">
+                Already have an account?
+                <a href="<?php echo BASE_URL; ?>/User/login">Log in</a>
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+
+
+===== FILE: app\views\user\welcome.php =====
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PawCare • Welcome</title>
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0 }
+    body {
+      font-family: 'Quicksand', sans-serif;
+      background: #f0faf6;
+    }
+    /* ─── Nav is included below ─── */
+
+    /* ─── Hero section ─── */
+    .hero {
+      position: relative;
+      height: 100vh;
+      background: url('https://neurosciencenews.com/files/2023/10/cat-dog-culture-affection-neuroscience.jpg')
+                  center/cover no-repeat;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .hero::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.4);
+    }
+    .hero-content {
+      position: relative;
+      text-align: center;
+      color: #fff;
+      max-width: 700px;
+      padding: 0 1rem;
+    }
+    .hero-content h1 {
+      font-size: 2.8rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+    .hero-content p {
+      font-size: 1rem;
+      line-height: 1.5;
+      margin-bottom: 2rem;
+    }
+    .hero-content a.btn {
+      display: inline-block;
+      background: #26c1a8;
+      color: #fff;
+      text-decoration: none;
+      padding: 14px 34px;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 12px;
+      transition: .3s background;
+    }
+    .hero-content a.btn:hover {
+      background: #1ea893;
+    }
+  </style>
+</head>
+<body>
+  <?php include_once 'app/views/partials/nav.php'; ?>
+
+  <section class="hero">
+    <div class="hero-content">
+      <h1>Welcome to Your Paw-tastic Adventure, <?=htmlspecialchars($data['user'])?>!</h1>
+      <div style="white-space: pre-wrap; font-family: 'Segoe UI', sans-serif; font-size: 1.1rem; margin-bottom: 3rem;">
+Your one-stop haven for furry friends, wagging tails, and purring hearts.
+Looking for the perfect companion? Whether it’s playful pups, cuddly kittens, or all the toys and treats in between — we’re here to help you find joy, love, and loyalty wrapped in fur.
+Adopt. Shop. Love.
+
+🦴 Browse our adorable buddies
+🛍️ Explore must-have pet goodies
+💗 Bring home happiness today!
+</div>
+      <a href="<?=BASE_URL?>/Pet/index" class="btn">Start Your Paw-venture</a>
+    </div>
+  </section>
+</body>
+</html>
+
+
+===== FILE: core\Controller.php =====
+<?php
+class Controller
+{
+    /* load a model */
+    public function model($model)
+    {
+        require_once 'app/models/' . $model . '.php';
+        return new $model();
+    }
+
+    /* load a view and make $data keys available as variables */
+    public function view($view, $data = [])
+    {
+        extract($data);                           // ⭐ makes $prod, $products, etc.
+        require 'app/views/' . $view . '.php';
+    }
+}
+
+
+===== FILE: core\Database.php =====
+<?php
+class Database {
+    protected $pdo;
+
+    public function __construct() {
+        try {
+            $this->pdo = new PDO("mysql:host=localhost;dbname=pawcare_db", "root", "");
+        } catch (PDOException $e) {
+            die($e->getMessage());
+        }
+    }
+}
+

@@ -5,8 +5,8 @@ from pathlib import Path
 
 def collect_files(root: Path, out_file: Path):
     # names to always skip
-    SKIP_DIRS = {"node_modules"}            # folder names (case-insensitive)
-    SKIP_FILES = {"package-lock.json", "collect_files.py"}      # file names (case-insensitive)
+    SKIP_DIRS = {"node_modules",".git"}            # folder names (case-insensitive)
+    SKIP_FILES = {"package-lock.json", "collect_files.py",".git"}      # file names (case-insensitive)
 
     with out_file.open("w", encoding="utf-8", errors="replace") as out:
         for path in root.rglob("*"):

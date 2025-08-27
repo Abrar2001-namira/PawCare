@@ -17,7 +17,6 @@ tr:nth-child(even){background:#fafafa}
 .actions a{margin-right:10px;color:#ff8552;text-decoration:none;font-weight:600}
 .actions a:hover{color:#e4713f}
 img.thumb{height:40px;width:40px;object-fit:cover;border-radius:50%}
-/* contact cell */
 .contact{font-size:.85rem;line-height:1.3;color:#41403e}
 .contact .addr{font-size:.78rem;color:#777}
 </style></head><body>
@@ -45,7 +44,7 @@ img.thumb{height:40px;width:40px;object-fit:cover;border-radius:50%}
   <td class="contact">
     <?=htmlspecialchars($p['phone'] ?: '—')?><br>
     <?=htmlspecialchars($p['email'] ?: '—')?><br>
-    <span class="addr"><?=htmlspecialchars($p['foster_home'] ?: '')?></span>
+    <span class="addr"><?=htmlspecialchars($p['location'] ?: '')?></span>
   </td>
 
   <td class="status <?=$p['adopted']?'adopted':'available'?>">

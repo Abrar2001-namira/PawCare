@@ -30,6 +30,58 @@ $controller = new $controllerName();
 $controller->$method();
 
 
+===== FILE: app\controllers\AdminAdoptionController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AdminAdoptionController extends Controller
+{
+    private function guard() {
+        if (($_SESSION['role'] ?? '') !== 'admin') {
+            header("Location: ".BASE_URL."/User/login"); exit;
+        }
+    }
+
+    public function index()
+    {
+        $this->guard();
+        $apps = $this->model('Adoption')->all(); // includes pet info
+        $this->view('admin/adoptions', ['apps'=>$apps]);
+    }
+
+    public function accept()
+    {
+        $this->guard();
+        $id = $_GET['id'] ?? null;
+        if(!$id){ header("Location: ".BASE_URL."/AdminAdoption/index"); exit; }
+
+        $app = $this->model('Adoption')->find($id);
+        if(!$app){ header("Location: ".BASE_URL."/AdminAdoption/index"); exit; }
+
+        // 1) mark application accepted
+        $this->model('Adoption')->setStatus($id, 'accepted');
+        // 2) mark the pet as adopted
+        $this->model('Pet')->setAdopted($app['pet_id'], 1);
+        // 3) auto-reject all other pending apps for this pet
+        $this->model('Adoption')->closeOthersForPet($app['pet_id'], $id);
+
+        header("Location: ".BASE_URL."/AdminAdoption/index"); exit;
+    }
+
+    public function reject()
+    {
+        $this->guard();
+        $id = $_GET['id'] ?? null;
+        if(!$id){ header("Location: ".BASE_URL."/AdminAdoption/index"); exit; }
+
+        $this->model('Adoption')->setStatus($id, 'rejected');
+        header("Location: ".BASE_URL."/AdminAdoption/index"); exit;
+    }
+}
+
+
 ===== FILE: app\controllers\AdminController.php =====
 <?php
 require_once 'core/Controller.php';
@@ -88,6 +140,30 @@ class AdminController extends Controller
         $id = $_GET['id'] ?? null;
         if ($id) $this->model('Product')->delete($id);
         header("Location: " . BASE_URL . "/Admin/index"); exit;
+    }
+}
+
+
+===== FILE: app\controllers\AdminDonationController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AdminDonationController extends Controller
+{
+    private function guard()
+    {
+        if (($_SESSION['role'] ?? '') !== 'admin') {
+            header("Location: ".BASE_URL."/Shop/index"); exit;
+        }
+    }
+
+    public function index()
+    {
+        $this->guard();
+        $list = $this->model('Donation')->all();   // joined with shelters
+        $this->view('admin/donations', ['donations'=>$list]);
     }
 }
 
@@ -193,6 +269,129 @@ class AdminPetController extends Controller
 }
 
 
+===== FILE: app\controllers\AdminRehomeController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AdminRehomeController extends Controller
+{
+    private function guard() {
+        if (($_SESSION['role'] ?? '') !== 'admin') {
+            header("Location: ".BASE_URL."/User/login"); exit;
+        }
+    }
+
+    public function index()
+    {
+        $this->guard();
+        $list = $this->model('Rehome')->all();
+        $this->view('admin/rehomes', ['list'=>$list]);
+    }
+
+    public function accept()
+    {
+        $this->guard();
+        $id = $_GET['id'] ?? null; if(!$id){ header("Location: ".BASE_URL."/AdminRehome/index"); exit; }
+        $req = $this->model('Rehome')->find($id); if(!$req){ header("Location: ".BASE_URL."/AdminRehome/index"); exit; }
+
+        // Create a PET entry from request (available by default)
+        $this->model('Pet')->create([
+            'name'        => $req['name'],
+            'species'     => $req['species'],
+            'age'         => $req['age'],
+            'breed'       => $req['breed'],
+            'vaccinated'  => $req['vaccinated'],
+            'adopted'     => 0,
+            'image'       => $req['image'],
+            'story'       => $req['story'],
+            'phone'       => $req['owner_phone'],
+            'email'       => $req['owner_email'],
+            'location'    => $req['address']    // ⬅️ use Location
+        ]);
+
+        $this->model('Rehome')->setStatus($id,'accepted');
+        echo "<script>alert('Request accepted. Pet added to list!');location='".BASE_URL."/AdminRehome/index';</script>";
+        exit;
+    }
+
+    public function reject()
+    {
+        $this->guard();
+        $id = $_GET['id'] ?? null; if(!$id){ header("Location: ".BASE_URL."/AdminRehome/index"); exit; }
+        $this->model('Rehome')->setStatus($id,'rejected');
+        header("Location: ".BASE_URL."/AdminRehome/index"); exit;
+    }
+}
+
+
+===== FILE: app\controllers\AdoptionController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AdoptionController extends Controller
+{
+    /* Show guidelines + form for a specific pet */
+    public function apply()
+    {
+        $petId = $_GET['pet_id'] ?? ($_POST['pet_id'] ?? null);
+        if (!$petId) { header("Location: ".BASE_URL."/Pet/index"); exit; }
+
+        $pet = $this->model('Pet')->find($petId);
+        if (!$pet)  { header("Location: ".BASE_URL."/Pet/index"); exit; }
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            /* basic validation */
+            if (empty($_POST['applicant_name']) || empty($_POST['email']) || empty($_POST['phone']) || empty($_POST['city_state']) || empty($_POST['agree'])) {
+                echo "<script>alert('Please fill the required fields and agree to the guidelines.');history.back();</script>";
+                exit;
+            }
+
+            /* turn checkbox arrays into comma strings */
+            $join = function($key) { return isset($_POST[$key]) ? implode(', ', (array)$_POST[$key]) : ''; };
+
+            $data = [
+                'user_id'        => $_SESSION['user_id'] ?? null,
+                'pet_id'         => $petId,
+                'applicant_name' => trim($_POST['applicant_name']),
+                'email'          => trim($_POST['email']),
+                'phone'          => trim($_POST['phone']),
+                'city_state'     => trim($_POST['city_state']),
+                'can_text'       => (int)($_POST['can_text'] ?? 0),
+                'heard_about'    => $join('heard'),
+                'current_pets'   => $join('current_pets'),
+                'looking_for'    => $join('looking_for'),
+                'house_type'     => $join('house_type'),
+                'house_members'  => trim($_POST['house_members'] ?? ''),
+                'notes'          => trim($_POST['notes'] ?? ''),
+                'initials'       => trim($_POST['initials'] ?? ''),
+                'agree'          => 1
+            ];
+
+            $id = $this->model('Adoption')->create($data);
+            header("Location: ".BASE_URL."/Adoption/thanks?id=".$id); exit;
+        }
+
+        $this->view('adoption/apply', ['pet'=>$pet]);
+    }
+
+    /* Short confirmation */
+    public function thanks()
+    {
+        $id = $_GET['id'] ?? null;
+        if (!$id) { header("Location: ".BASE_URL."/Pet/index"); exit; }
+
+        $a = $this->model('Adoption')->find($id);
+        if (!$a) { header("Location: ".BASE_URL."/Pet/index"); exit; }
+
+        $this->view('adoption/thanks', ['app'=>$a]);
+    }
+}
+
+
 ===== FILE: app\controllers\CartController.php =====
 <?php
 require_once 'core/Controller.php';
@@ -269,6 +468,76 @@ class CartController extends Controller
 }
 
 
+===== FILE: app\controllers\DonationController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class DonationController extends Controller
+{
+    /* Landing page (hero + info + stats + Donate Now button) */
+    public function index()
+    {
+        $stats = $this->model('Donation')->stats();
+        $this->view('donation/index', [
+            'stats'    => $stats
+        ]);
+    }
+
+    /* Show the donation form */
+    public function give()
+    {
+        $shelters = $this->model('Shelter')->all();
+        $this->view('donation/give', [
+            'shelters' => $shelters,
+            'username' => $_SESSION['user'] ?? '',
+            'email'    => ''   // prefill if you want later
+        ]);
+    }
+
+    /* Handle submit */
+    public function submit()
+    {
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            header("Location: ".BASE_URL."/Donation/give"); exit;
+        }
+
+        $amount    = (float)($_POST['amount'] ?? 0);
+        $shelterId = $_POST['shelter_id'] ?? null;
+
+        if ($amount <= 0 || !$shelterId) {
+            echo "<script>alert('Please select a shelter and enter a valid amount.');history.back();</script>";
+            exit;
+        }
+
+        $data = [
+            'user_id'    => $_SESSION['user_id'] ?? null,
+            'name'       => trim($_POST['name'] ?? ($_SESSION['user'] ?? '')),
+            'email'      => trim($_POST['email'] ?? ''),
+            'shelter_id' => $shelterId,
+            'amount'     => $amount,
+            'note'       => trim($_POST['note'] ?? '')
+        ];
+
+        $id = $this->model('Donation')->create($data);
+        header("Location: ".BASE_URL."/Donation/thanks?id=".$id); exit;
+    }
+
+    /* Thank-you page */
+    public function thanks()
+    {
+        $id = $_GET['id'] ?? null;
+        if (!$id) { header("Location: ".BASE_URL."/Donation/index"); exit; }
+
+        $don = $this->model('Donation')->find($id);
+        if (!$don) { header("Location: ".BASE_URL."/Donation/index"); exit; }
+
+        $this->view('donation/thanks', ['donation'=>$don]);
+    }
+}
+
+
 ===== FILE: app\controllers\OrderController.php =====
 <?php
 require_once 'core/Controller.php';
@@ -299,35 +568,87 @@ class PetController extends Controller
 {
     public function index()
     {
-        $species = $_GET['species'] ?? null;
+        $species  = $_GET['species']  ?? null;               // 'Dog', 'Cat', or null for All
+        $location = trim($_GET['location'] ?? '');           // free text search
 
-        if ($species) {
-            $pets = $this->model('Pet')->bySpecies($species);
-        } else {
-            $pets = $this->model('Pet')->all();
-        }
+        $pets = $this->model('Pet')->search($species, $location);
 
         $this->view('pet/index', [
-            'pets'    => $pets,
-            'species'=> $species
+            'pets'     => $pets,
+            'species'  => $species,
+            'location' => $location
         ]);
     }
 
     public function detail()
     {
         $id = $_GET['id'] ?? null;
-        if (!$id) {
-            header("Location: " . BASE_URL . "/Pet/index");
-            exit;
-        }
+        if (!$id) { header("Location: " . BASE_URL . "/Pet/index"); exit; }
 
         $pet = $this->model('Pet')->find($id);
-        if (!$pet) {
-            header("Location: " . BASE_URL . "/Pet/index");
-            exit;
-        }
+        if (!$pet) { header("Location: " . BASE_URL . "/Pet/index"); exit; }
 
         $this->view('pet/detail', ['pet' => $pet]);
+    }
+}
+
+
+===== FILE: app\controllers\RehomeController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class RehomeController extends Controller
+{
+    private function guard() {
+        if (!isset($_SESSION['user_id'])) {
+            header("Location: ".BASE_URL."/User/login"); exit;
+        }
+    }
+
+    /* GET: show form, POST: save request */
+    public function request()
+    {
+        $this->guard();
+
+        if ($_SERVER['REQUEST_METHOD']==='POST') {
+            $data = [
+                'user_id'    => $_SESSION['user_id'],
+                'owner_name' => trim($_POST['owner_name'] ?? $_SESSION['user']),
+                'owner_email'=> trim($_POST['owner_email'] ?? ''),
+                'owner_phone'=> trim($_POST['owner_phone'] ?? ''),
+                'address'    => trim($_POST['address'] ?? ''),
+                'name'       => trim($_POST['name'] ?? ''),
+                'species'    => trim($_POST['species'] ?? 'Dog'),
+                'age'        => trim($_POST['age'] ?? ''),
+                'breed'      => trim($_POST['breed'] ?? ''),
+                'vaccinated' => (int)($_POST['vaccinated'] ?? 1),
+                'image'      => trim($_POST['image'] ?? ''),
+                'story'      => trim($_POST['story'] ?? '')
+            ];
+
+            // simple validations
+            if ($data['name']==='' || $data['image']==='') {
+                echo "<script>alert('Please provide pet name and a photo URL.');history.back();</script>"; exit;
+            }
+
+            $id = $this->model('Rehome')->create($data);
+            header("Location: ".BASE_URL."/Rehome/thanks?id=".$id); exit;
+        }
+
+        // prefill from logged user (optional)
+        $u = $this->model('User')->findById($_SESSION['user_id']);
+        $this->view('rehome/request', ['u'=>$u]);
+    }
+
+    public function thanks()
+    {
+        $id = $_GET['id'] ?? null;
+        if (!$id) { header("Location: ".BASE_URL."/User/profile"); exit; }
+        $req = $this->model('Rehome')->find($id);
+        if (!$req) { header("Location: ".BASE_URL."/User/profile"); exit; }
+        $this->view('rehome/thanks', ['r'=>$req]);
     }
 }
 
@@ -391,8 +712,6 @@ class UserController extends Controller
             $_SESSION['user_id'] = $id;
             $_SESSION['user']    = $_POST['username'];
             $_SESSION['role']    = 'user';
-
-            // after sign-up, go straight to welcome
             header("Location: ".BASE_URL."/User/welcome"); exit;
         }
         $this->view('user/register');
@@ -403,17 +722,11 @@ class UserController extends Controller
     {
         if ($_SERVER['REQUEST_METHOD']==='POST') {
             $u = $this->model('User')->checkLogin($_POST['email']);
-
             if ($u && password_verify($_POST['password'],$u['password'])) {
                 $_SESSION['user_id'] = $u['id'];
                 $_SESSION['user']    = $u['username'];
                 $_SESSION['role']    = $u['role'];
-
-                // admins go to Admin dashboard, everyone else to welcome
-                $dest = $u['role']==='admin'
-                      ? "/Admin/index"
-                      : "/User/welcome";
-
+                $dest = $u['role']==='admin' ? "/Admin/index" : "/User/welcome";
                 header("Location: ".BASE_URL.$dest); exit;
             }
             echo "<p style='color:red;text-align:center'>Invalid credentials</p>";
@@ -421,14 +734,43 @@ class UserController extends Controller
         $this->view('user/login');
     }
 
-    /* WELCOME PAGE */
+    /* WELCOME */
     public function welcome()
     {
-        if (!isset($_SESSION['user_id'])) {
-            header("Location: ".BASE_URL."/User/login"); exit;
-        }
-        // pass username to view
+        if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
         $this->view('user/welcome', ['user'=>$_SESSION['user']]);
+    }
+
+    /* READ-ONLY PROFILE (no edit form here) */
+    public function profile()
+    {
+        if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
+        $u = $this->model('User')->findById($_SESSION['user_id']);
+        $this->view('user/profile', ['u'=>$u]);
+    }
+
+    /* EDIT PROFILE (only shown when user clicks “Edit Profile”) */
+    public function edit()
+    {
+        if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
+
+        $userModel = $this->model('User');
+
+        if ($_SERVER['REQUEST_METHOD']==='POST') {
+            $userModel->update($_SESSION['user_id'], [
+                'username'=> trim($_POST['username'] ?? ''),
+                'email'   => trim($_POST['email'] ?? ''),
+                'phone'   => trim($_POST['phone'] ?? ''),
+                'address' => trim($_POST['address'] ?? ''),
+                'bio'     => trim($_POST['bio'] ?? '')
+            ]);
+            $_SESSION['user'] = $_POST['username'] ?? $_SESSION['user'];
+            echo "<script>alert('Profile updated!');location='".BASE_URL."/User/profile';</script>";
+            exit;
+        }
+
+        $u = $userModel->findById($_SESSION['user_id']);
+        $this->view('user/edit', ['u'=>$u]);
     }
 
     /* LOGOUT */
@@ -436,6 +778,133 @@ class UserController extends Controller
     {
         session_destroy();
         header("Location: ".BASE_URL."/User/login"); exit;
+    }
+}
+
+
+===== FILE: app\models\Adoption.php =====
+<?php
+require_once 'core/Database.php';
+
+class Adoption extends Database
+{
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO adoptions
+             (user_id, pet_id, applicant_name, email, phone, city_state,
+              can_text, heard_about, current_pets, looking_for, house_type,
+              house_members, notes, initials, agree, status, created)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'pending', NOW())"
+        );
+        $q->execute([
+            $d['user_id'], $d['pet_id'], $d['applicant_name'], $d['email'], $d['phone'],
+            $d['city_state'], $d['can_text'], $d['heard_about'], $d['current_pets'],
+            $d['looking_for'], $d['house_type'], $d['house_members'], $d['notes'],
+            $d['initials'], $d['agree']
+        ]);
+        return $this->pdo->lastInsertId();
+    }
+
+    public function find($id)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT a.*, p.name AS pet_name, p.image AS pet_image
+               FROM adoptions a
+               LEFT JOIN pets p ON p.id = a.pet_id
+             WHERE a.id=?"
+        );
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+
+    /* Admin list with pet info */
+    public function all()
+    {
+        return $this->pdo->query(
+            "SELECT a.*, p.name AS pet_name, p.image AS pet_image
+               FROM adoptions a
+               LEFT JOIN pets p ON p.id = a.pet_id
+             ORDER BY a.created DESC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function setStatus($id, $status)
+    {
+        $q = $this->pdo->prepare("UPDATE adoptions SET status=? WHERE id=?");
+        return $q->execute([$status, $id]);
+    }
+
+    /* Reject other pending applications for the same pet */
+    public function closeOthersForPet($petId, $acceptedId)
+    {
+        $q = $this->pdo->prepare(
+            "UPDATE adoptions SET status='rejected'
+             WHERE pet_id=? AND id<>? AND status='pending'"
+        );
+        $q->execute([$petId, $acceptedId]);
+    }
+}
+
+
+===== FILE: app\models\Donation.php =====
+<?php
+require_once 'core/Database.php';
+
+class Donation extends Database
+{
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO donations (user_id,name,email,shelter_id,amount,note,created)
+             VALUES (?,?,?,?,?,?,NOW())"
+        );
+        $q->execute([
+            $d['user_id'], $d['name'], $d['email'],
+            $d['shelter_id'], $d['amount'], $d['note']
+        ]);
+        return $this->pdo->lastInsertId();
+    }
+
+    public function stats()
+    {
+        $row = $this->pdo->query(
+            "SELECT 
+                COUNT(*) AS donations,
+                IFNULL(SUM(amount),0) AS total,
+                COUNT(DISTINCT COALESCE(NULLIF(email,''), CONCAT('u',user_id), CONCAT('a',id))) AS donors
+             FROM donations"
+        )->fetch(PDO::FETCH_ASSOC);
+
+        return [
+            'donations' => (int)($row['donations'] ?? 0),
+            'total'     => (float)($row['total'] ?? 0),
+            'donors'    => (int)($row['donors'] ?? 0),
+        ];
+    }
+
+    public function find($id)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT d.*, s.name AS shelter_name
+               FROM donations d
+               LEFT JOIN shelters s ON s.id = d.shelter_id
+             WHERE d.id=?"
+        );
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+
+    /* ⭐ Admin list */
+    public function all()
+    {
+        return $this->pdo->query(
+            "SELECT d.id, d.created, d.name, d.email, d.amount, d.note,
+                    s.name AS shelter_name
+               FROM donations d
+               LEFT JOIN shelters s ON s.id = d.shelter_id
+             ORDER BY d.created DESC"
+        )->fetchAll(PDO::FETCH_ASSOC);
     }
 }
 
@@ -493,22 +962,39 @@ require_once 'core/Database.php';
 
 class Pet extends Database
 {
-    /* -------- READ -------- */
     public function all()
     {
-        return $this->pdo
-            ->query("SELECT * FROM pets ORDER BY id DESC")
-            ->fetchAll(PDO::FETCH_ASSOC);
+        return $this->pdo->query("SELECT * FROM pets ORDER BY id DESC")
+                         ->fetchAll(PDO::FETCH_ASSOC);
     }
 
     public function bySpecies($species)
     {
         $q = $this->pdo->prepare(
-            "SELECT * FROM pets 
-             WHERE LOWER(species)=LOWER(?) 
-             ORDER BY id DESC"
+            "SELECT * FROM pets WHERE LOWER(species)=LOWER(?) ORDER BY id DESC"
         );
         $q->execute([$species]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /* NEW: combined search by species + location (partial match). */
+    public function search($species = null, $location = '')
+    {
+        $sql  = "SELECT * FROM pets WHERE 1";
+        $args = [];
+
+        if ($species) {
+            $sql .= " AND LOWER(species)=LOWER(?)";
+            $args[] = $species;
+        }
+        if ($location !== '') {
+            $sql .= " AND LOWER(location) LIKE LOWER(?)";
+            $args[] = "%".$location."%";
+        }
+
+        $sql .= " ORDER BY id DESC";
+        $q = $this->pdo->prepare($sql);
+        $q->execute($args);
         return $q->fetchAll(PDO::FETCH_ASSOC);
     }
 
@@ -519,61 +1005,46 @@ class Pet extends Database
         return $q->fetch(PDO::FETCH_ASSOC);
     }
 
-    /* -------- CREATE -------- */
     public function create($d)
     {
         $q = $this->pdo->prepare(
             "INSERT INTO pets
                (name, species, age, breed, vaccinated, adopted,
-                image, story, phone, email, foster_home)
+                image, story, phone, email, location)
              VALUES (?,?,?,?,?,?,?,?,?,?,?)"
         );
         return $q->execute([
-            $d['name'],
-            $d['species'],
-            $d['age'],
-            $d['breed'],
-            $d['vaccinated'],
-            $d['adopted'],
-            $d['image'],
-            $d['story'],
-            $d['phone'],
-            $d['email'],
-            $d['foster_home']
+            $d['name'], $d['species'], $d['age'], $d['breed'],
+            $d['vaccinated'], $d['adopted'], $d['image'], $d['story'],
+            $d['phone'], $d['email'], $d['location']
         ]);
     }
 
-    /* -------- UPDATE -------- */
     public function update($id, $d)
     {
         $q = $this->pdo->prepare(
             "UPDATE pets SET
                 name=?, species=?, age=?, breed=?, vaccinated=?,
-                adopted=?, image=?, story=?, phone=?, email=?,
-                foster_home=?
+                adopted=?, image=?, story=?, phone=?, email=?, location=?
              WHERE id=?"
         );
         return $q->execute([
-            $d['name'],
-            $d['species'],
-            $d['age'],
-            $d['breed'],
-            $d['vaccinated'],
-            $d['adopted'],
-            $d['image'],
-            $d['story'],
-            $d['phone'],
-            $d['email'],
-            $d['foster_home'],
-            $id
+            $d['name'], $d['species'], $d['age'], $d['breed'], $d['vaccinated'],
+            $d['adopted'], $d['image'], $d['story'], $d['phone'], $d['email'],
+            $d['location'], $id
         ]);
     }
 
-    /* -------- DELETE -------- */
     public function delete($id)
     {
         $q = $this->pdo->prepare("DELETE FROM pets WHERE id=?");
         return $q->execute([$id]);
+    }
+
+    public function setAdopted($id, $flag = 1)
+    {
+        $q = $this->pdo->prepare("UPDATE pets SET adopted=? WHERE id=?");
+        return $q->execute([(int)$flag, $id]);
     }
 }
 
@@ -613,6 +1084,71 @@ class Product extends Database
 }
 
 
+===== FILE: app\models\Rehome.php =====
+<?php
+require_once 'core/Database.php';
+
+class Rehome extends Database
+{
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO rehomes
+             (user_id, owner_name, owner_email, owner_phone, address,
+              name, species, age, breed, vaccinated, image, story,
+              status, created)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'pending', NOW())"
+        );
+        $q->execute([
+            $d['user_id'], $d['owner_name'], $d['owner_email'], $d['owner_phone'], $d['address'],
+            $d['name'], $d['species'], $d['age'], $d['breed'], $d['vaccinated'], $d['image'], $d['story']
+        ]);
+        return $this->pdo->lastInsertId();
+    }
+
+    public function all()
+    {
+        return $this->pdo->query(
+            "SELECT * FROM rehomes ORDER BY created DESC"
+        )->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function find($id)
+    {
+        $q = $this->pdo->prepare("SELECT * FROM rehomes WHERE id=?");
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+
+    public function setStatus($id, $status)
+    {
+        $q = $this->pdo->prepare("UPDATE rehomes SET status=? WHERE id=?");
+        return $q->execute([$status, $id]);
+    }
+}
+
+
+===== FILE: app\models\Shelter.php =====
+<?php
+require_once 'core/Database.php';
+
+class Shelter extends Database
+{
+    public function all()
+    {
+        return $this->pdo->query("SELECT * FROM shelters ORDER BY name ASC")
+                         ->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function find($id)
+    {
+        $q = $this->pdo->prepare("SELECT * FROM shelters WHERE id=?");
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+}
+
+
 ===== FILE: app\models\User.php =====
 <?php
 require_once 'core/Database.php';
@@ -621,16 +1157,21 @@ class User extends Database
 {
     public function create($d)
     {
+        // accept optional phone/address/bio without breaking existing register flow
         $q = $this->pdo->prepare(
-            "INSERT INTO users (username,email,password,role) VALUES (?,?,?,?)"
+            "INSERT INTO users (username,email,password,role,phone,address,bio)
+             VALUES (?,?,?,?,?,?,?)"
         );
         $q->execute([
             $d['username'],
             $d['email'],
             $d['password'],
-            $d['role'] ?? 'user'
+            $d['role'] ?? 'user',
+            $d['phone']   ?? null,
+            $d['address'] ?? null,
+            $d['bio']     ?? null,
         ]);
-        return $this->pdo->lastInsertId();       // ⭐ new
+        return $this->pdo->lastInsertId();
     }
 
     public function checkLogin($email)
@@ -639,7 +1180,146 @@ class User extends Database
         $q->execute([$email]);
         return $q->fetch(PDO::FETCH_ASSOC);
     }
+
+    public function findById($id)
+    {
+        $q = $this->pdo->prepare("SELECT id,username,email,role,phone,address,bio FROM users WHERE id=?");
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+
+    public function update($id, $d)
+    {
+        $q = $this->pdo->prepare("UPDATE users SET username=?, email=?, phone=?, address=?, bio=? WHERE id=?");
+        return $q->execute([
+            $d['username'],
+            $d['email'],
+            $d['phone'],
+            $d['address'],
+            $d['bio'],
+            $id
+        ]);
+    }
 }
+
+
+===== FILE: app\views\admin\adoptions.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Admin • Adoption Applications</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{text-align:center;margin:90px 0 1.4rem;font-size:2rem;font-weight:600;color:#41403e}
+table{width:100%;background:#fff;border-collapse:collapse;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:12px 14px;font-size:.9rem;vertical-align:top}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+img.thumb{width:44px;height:44px;object-fit:cover;border-radius:8px;margin-right:8px;vertical-align:middle}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem}
+.pending{background:#fff3d6;color:#9b6b00;border:1px solid #f5d48a}
+.accepted{background:#e7f8f4;color:#1b907d;border:1px solid #bfece1}
+.rejected{background:#ffe6e6;color:#9c2a2a;border:1px solid #ffb2b2}
+a.btn{display:inline-block;background:#26c1a8;color:#fff;text-decoration:none;padding:8px 12px;border-radius:10px;font-weight:600;margin-right:8px}
+a.btn:hover{background:#1ea893}
+a.btn-alt{display:inline-block;border:2px solid #26c1a8;color:#26c1a8;text-decoration:none;padding:6px 10px;border-radius:10px;font-weight:600}
+a.btn-alt:hover{background:#e7f8f4}
+.when{color:#777;font-size:.85rem}
+.email,.phone{color:#555}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>Adoption Applications</h1>
+
+<table>
+<thead>
+<tr>
+  <th>ID</th>
+  <th>Submitted</th>
+  <th>Pet</th>
+  <th>Applicant</th>
+  <th>Contact</th>
+  <th>City/State</th>
+  <th>Status</th>
+  <th style="width:22%">Actions</th>
+</tr>
+</thead>
+<tbody>
+<?php foreach($apps as $a): ?>
+<tr>
+  <td><?=$a['id']?></td>
+  <td class="when"><?=date('Y-m-d H:i', strtotime($a['created']))?></td>
+  <td>
+    <img class="thumb" src="<?=htmlspecialchars($a['pet_image'])?>" alt="">
+    <?=htmlspecialchars($a['pet_name'])?>
+  </td>
+  <td><?=htmlspecialchars($a['applicant_name'])?></td>
+  <td>
+    <div class="email"><?=htmlspecialchars($a['email'])?></div>
+    <div class="phone"><?=htmlspecialchars($a['phone'])?></div>
+  </td>
+  <td><?=htmlspecialchars($a['city_state'])?></td>
+  <td><span class="badge <?=$a['status']?>"><?=ucfirst($a['status'])?></span></td>
+  <td>
+    <?php if($a['status']==='pending'): ?>
+      <a class="btn" href="<?=BASE_URL?>/AdminAdoption/accept?id=<?=$a['id']?>" onclick="return confirm('Accept this application and mark the pet as Adopted?')">Accept</a>
+      <a class="btn-alt" href="<?=BASE_URL?>/AdminAdoption/reject?id=<?=$a['id']?>" onclick="return confirm('Reject this application?')">Reject</a>
+    <?php else: ?><span class="when">No actions</span><?php endif; ?>
+  </td>
+</tr>
+<?php endforeach; ?>
+</tbody>
+</table>
+</body></html>
+
+
+===== FILE: app\views\admin\donations.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Admin • Donations</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{text-align:center;margin:90px 0 1.6rem;font-size:2rem;font-weight:600;color:#41403e}
+table{width:100%;background:#fff;border-collapse:collapse;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:14px 16px;font-size:.9rem;vertical-align:top}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+.amount{font-weight:700;color:#ff8552}
+.note{color:#555;font-size:.85rem}
+.when{color:#777;font-size:.85rem}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>Donations</h1>
+
+<table>
+<thead>
+  <tr>
+    <th>ID</th>
+    <th>Date</th>
+    <th>Shelter</th>
+    <th>Donor Name</th>
+    <th>Donor Email</th>
+    <th>Amount</th>
+    <th>Note</th>
+  </tr>
+</thead>
+<tbody>
+<?php foreach($donations as $d): ?>
+<tr>
+  <td><?=$d['id']?></td>
+  <td class="when"><?=date('Y-m-d H:i', strtotime($d['created']))?></td>
+  <td><?=htmlspecialchars($d['shelter_name'] ?? '—')?></td>
+  <td><?=htmlspecialchars($d['name'] ?: '—')?></td>
+  <td><?=htmlspecialchars($d['email'] ?: '—')?></td>
+  <td class="amount">$<?=number_format($d['amount'],2)?></td>
+  <td class="note"><?=htmlspecialchars($d['note'] ?: '')?></td>
+</tr>
+<?php endforeach; ?>
+</tbody>
+</table>
+</body></html>
 
 
 ===== FILE: app\views\admin\form.php =====
@@ -806,7 +1486,6 @@ tr:nth-child(even){background:#fafafa}
 .actions a{margin-right:10px;color:#ff8552;text-decoration:none;font-weight:600}
 .actions a:hover{color:#e4713f}
 img.thumb{height:40px;width:40px;object-fit:cover;border-radius:50%}
-/* contact cell */
 .contact{font-size:.85rem;line-height:1.3;color:#41403e}
 .contact .addr{font-size:.78rem;color:#777}
 </style></head><body>
@@ -834,7 +1513,7 @@ img.thumb{height:40px;width:40px;object-fit:cover;border-radius:50%}
   <td class="contact">
     <?=htmlspecialchars($p['phone'] ?: '—')?><br>
     <?=htmlspecialchars($p['email'] ?: '—')?><br>
-    <span class="addr"><?=htmlspecialchars($p['foster_home'] ?: '')?></span>
+    <span class="addr"><?=htmlspecialchars($p['location'] ?: '')?></span>
   </td>
 
   <td class="status <?=$p['adopted']?'adopted':'available'?>">
@@ -878,7 +1557,7 @@ button:hover{background:#1ea893}
   $p = $data['mode']=='edit' ? $data['pet']
                              : ['id'=>'','name'=>'','species'=>'Dog','age'=>'','breed'=>'',
                                 'vaccinated'=>1,'adopted'=>0,'image'=>'','story'=>'',
-                                'phone'=>'','email'=>'','foster_home'=>''];
+                                'phone'=>'','email'=>'','location'=>''];
   $action = $data['mode']=='add'
             ? BASE_URL.'/AdminPet/add'
             : BASE_URL.'/AdminPet/edit?id='.$p['id'];
@@ -929,12 +1608,332 @@ button:hover{background:#1ea893}
       <label>Email</label>
       <input type="email" name="email" value="<?=htmlspecialchars($p['email'])?>">
 
-      <label>Foster Home Address</label>
-      <input type="text" name="foster_home" value="<?=htmlspecialchars($p['foster_home'])?>">
+      <label>Location</label>
+      <input type="text" name="location" value="<?=htmlspecialchars($p['location'])?>">
     </div>
 
     <button type="submit"><?=$data['mode']=='add'?'Save':'Update'?></button>
   </form>
+</div>
+</body></html>
+
+
+===== FILE: app\views\admin\rehomes.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Admin • ReHome Requests</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+h1{text-align:center;margin:90px 0 1.4rem;font-size:2rem;font-weight:600;color:#41403e}
+table{width:100%;background:#fff;border-collapse:collapse;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:12px 14px;font-size:.9rem;vertical-align:top}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem}
+.pending{background:#fff3d6;color:#9b6b00;border:1px solid #f5d48a}
+.accepted{background:#e7f8f4;color:#1b907d;border:1px solid #bfece1}
+.rejected{background:#ffe6e6;color:#9c2a2a;border:1px solid #ffb2b2}
+a.btn{display:inline-block;background:#26c1a8;color:#fff;text-decoration:none;padding:8px 12px;border-radius:10px;font-weight:600;margin-right:8px}
+a.btn:hover{background:#1ea893}
+a.btn-alt{display:inline-block;border:2px solid #26c1a8;color:#26c1a8;text-decoration:none;padding:6px 10px;border-radius:10px;font-weight:600}
+a.btn-alt:hover{background:#e7f8f4}
+.note{color:#555;white-space:pre-wrap}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<h1>ReHome Requests</h1>
+
+<table>
+<thead>
+  <tr>
+    <th>ID</th><th>Date</th><th>Pet</th><th>Owner</th>
+    <th>Contact</th><th>Address</th><th>Status</th><th style="width:22%">Actions</th>
+  </tr>
+</thead>
+<tbody>
+<?php foreach($list as $r): ?>
+<tr>
+  <td><?=$r['id']?></td>
+  <td><?=date('Y-m-d H:i', strtotime($r['created']))?></td>
+  <td>
+    <div><b><?=htmlspecialchars($r['name'])?></b> (<?=htmlspecialchars($r['species'])?>)</div>
+    <?php if(!empty($r['image'])): ?>
+      <div><img src="<?=htmlspecialchars($r['image'])?>" alt="" style="height:44px;width:44px;object-fit:cover;border-radius:8px;margin-top:4px"></div>
+    <?php endif; ?>
+    <div class="note"><?=htmlspecialchars($r['story'])?></div>
+  </td>
+  <td><?=htmlspecialchars($r['owner_name'])?></td>
+  <td>
+    <div><?=htmlspecialchars($r['owner_email'])?></div>
+    <div><?=htmlspecialchars($r['owner_phone'])?></div>
+  </td>
+  <td><?=htmlspecialchars($r['address'])?></td>
+  <td><span class="badge <?=$r['status']?>"><?=ucfirst($r['status'])?></span></td>
+  <td>
+    <?php if($r['status']==='pending'): ?>
+      <a class="btn" href="<?=BASE_URL?>/AdminRehome/accept?id=<?=$r['id']?>" onclick="return confirm('Accept and add this pet to the list?')">Accept</a>
+      <a class="btn-alt" href="<?=BASE_URL?>/AdminRehome/reject?id=<?=$r['id']?>" onclick="return confirm('Reject this request?')">Reject</a>
+    <?php else: ?>
+      <span style="color:#777">No actions</span>
+    <?php endif; ?>
+  </td>
+</tr>
+<?php endforeach; ?>
+</tbody>
+</table>
+</body></html>
+
+
+===== FILE: app\views\adoption\apply.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<title>Apply to Adopt • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --brand:#26c1a8; --brand-2:#ff8552; --ink:#41403e; --text:#555; --muted:#777;
+  --card:#fff; --bg:#f0faf6; --line:#e9e7e6;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);padding:42px 6%}
+
+/* ===== Hero (pet image + guidelines) ===== */
+.hero{
+  max-width:1000px;margin:86px auto 16px;background:var(--card);
+  border-radius:18px;box-shadow:0 8px 18px rgba(0,0,0,.08);
+  display:flex;overflow:hidden
+}
+.hero-img{width:38%;min-height:280px;object-fit:cover}
+.hero-txt{width:62%;padding:26px 30px}
+h1{font-size:1.7rem;font-weight:600;color:var(--ink);line-height:1.2}
+.small{color:var(--muted);font-size:.9rem;margin-top:6px}
+ol{margin:10px 0 0 22px}
+ol li{color:var(--text);line-height:1.55;margin:.32rem 0}
+ol li::marker{content:"🐾 ";}
+
+/* ===== Card / Form ===== */
+.card{
+  background:var(--card);border-radius:18px;box-shadow:0 8px 18px rgba(0,0,0,.08);
+  max-width:1000px;margin:18px auto;padding:26px 30px
+}
+.section{margin-top:16px;padding-top:12px;border-top:2px dashed #eef3f1}
+.section:first-of-type{border-top:none;padding-top:0;margin-top:0}
+.section h2{
+  font-size:1.05rem;color:var(--ink);font-weight:700;margin-bottom:6px;
+  display:flex;align-items:center;gap:8px
+}
+.section h2 .tag{background:var(--brand);color:#fff;border-radius:999px;padding:4px 10px;font-size:.8rem}
+
+/* Inputs */
+label{display:block;font-weight:600;color:var(--ink);margin-top:14px;font-size:.95rem}
+input,textarea,select{
+  width:100%;padding:.8rem 1rem;border:2px solid var(--line);
+  border-radius:12px;margin-top:.45rem;font-size:.95rem;background:#fff
+}
+input:focus,textarea:focus,select:focus{outline:none;border-color:var(--brand)}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.col{flex:1 1 260px}
+
+/* ===== Fixed option alignment ===== */
+.group{margin-top:10px}
+.opts-grid{
+  display:grid;gap:8px;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));
+  margin-top:6px
+}
+.option{
+  display:flex;align-items:center;gap:10px;          /* ← center-align vertically */
+  color:var(--text); line-height:1.35; padding:6px 4px
+}
+.option input{
+  flex:0 0 auto; width:18px; height:18px;            /* ← uniform control size */
+  margin:0; accent-color:var(--brand);               /* brand tick, matches theme */
+}
+.option span{display:block}
+
+/* Button */
+button{
+  margin-top:20px;background:var(--brand);color:#fff;border:none;width:100%;
+  padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s
+}
+button:hover{background:#1ea893}
+.helper{color:var(--muted);font-size:.85rem;margin-top:8px}
+
+/* Responsive */
+@media (max-width:900px){
+  .hero{flex-direction:column}
+  .hero-img,.hero-txt{width:100%}
+}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<!-- ===== Guidelines ===== -->
+<div class="hero">
+  <img class="hero-img" src="<?=htmlspecialchars($pet['image'])?>" alt="<?=htmlspecialchars($pet['name'])?>">
+  <div class="hero-txt">
+    <h1>Adoption Guidelines for <span style="background:#eaf8f5;color:var(--brand);border:1px solid #d6f2ea;border-radius:999px;padding:4px 10px;font-size:.9rem;font-weight:700"><?=htmlspecialchars($pet['name'])?></span></h1>
+    <div class="small">Please read these friendly rules before submitting your application.</div>
+    <ol>
+      <li><b>Minimum Age:</b> You must be at least 18 years old.</li>
+      <li><b>Vet Reference:</b> Responsible care includes annual exams and vaccinations.</li>
+      <li><b>Spay/Neuter:</b> All pets are spayed/neutered (unless medically exempt).</li>
+      <li><b>Home Setup:</b> Indoor homes; fenced yards may be required for some dogs.</li>
+      <li><b>Other Pets:</b> We’ll confirm compatibility and basic health tests when needed.</li>
+      <li><b>Renters:</b> Please confirm pets are allowed (and deposits if required).</li>
+      <li><b>Home Visit:</b> A short home check may be requested by appointment.</li>
+    </ol>
+  </div>
+</div>
+
+<!-- ===== Application Form ===== -->
+<div class="card">
+  <form method="POST" action="<?=BASE_URL?>/Adoption/apply?pet_id=<?=$pet['id']?>">
+    <input type="hidden" name="pet_id" value="<?=$pet['id']?>">
+
+    <div class="section">
+      <h2><span class="tag">Step 1</span> Basics</h2>
+      <div class="row">
+        <div class="col">
+          <label>App Date</label>
+          <input type="text" value="<?=date('n/j/Y')?>" readonly>
+        </div>
+        <div class="col">
+          <label>Pet</label>
+          <input type="text" value="<?=htmlspecialchars($pet['name'])?>" readonly>
+        </div>
+      </div>
+
+      <label>Name of Applicant *</label>
+      <input type="text" name="applicant_name" required>
+
+      <div class="row">
+        <div class="col">
+          <label>Email address *</label>
+          <input type="email" name="email" required>
+        </div>
+        <div class="col">
+          <label>Best Contact Phone Number *</label>
+          <input type="text" name="phone" required>
+        </div>
+      </div>
+
+      <label>Your City & State *</label>
+      <input type="text" name="city_state" placeholder="e.g., Dhanmondi, Dhaka" required>
+
+      <div class="group">
+        <label>Can we text you at that number? *</label>
+        <div class="opts-grid" style="grid-template-columns:repeat(2, minmax(120px,1fr))">
+          <label class="option"><input type="radio" name="can_text" value="1" required><span>Yes, please.</span></label>
+          <label class="option"><input type="radio" name="can_text" value="0"><span>No, thank you.</span></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2><span class="tag">Step 2</span> Tell us a little more</h2>
+
+      <label>How did you hear about our adoptable pets? (select all that apply)</label>
+      <div class="opts-grid">
+        <label class="option"><input type="checkbox" name="heard[]" value="Website"><span>Website</span></label>
+        <label class="option"><input type="checkbox" name="heard[]" value="Facebook"><span>Facebook</span></label>
+        <label class="option"><input type="checkbox" name="heard[]" value="Instagram"><span>Instagram</span></label>
+        <label class="option"><input type="checkbox" name="heard[]" value="Friend/Family"><span>Friend/Family</span></label>
+        <label class="option"><input type="checkbox" name="heard[]" value="Other"><span>Other</span></label>
+      </div>
+
+      <label>Do you currently have any companion animals in your home? (select all that apply)</label>
+      <div class="opts-grid">
+        <label class="option"><input type="checkbox" name="current_pets[]" value="None"><span>None</span></label>
+        <label class="option"><input type="checkbox" name="current_pets[]" value="1 Dog"><span>1 Dog</span></label>
+        <label class="option"><input type="checkbox" name="current_pets[]" value="2+ Dogs"><span>2+ Dogs</span></label>
+        <label class="option"><input type="checkbox" name="current_pets[]" value="1 Cat"><span>1 Cat</span></label>
+        <label class="option"><input type="checkbox" name="current_pets[]" value="2+ Cats"><span>2+ Cats</span></label>
+        <label class="option"><input type="checkbox" name="current_pets[]" value="Other"><span>Other</span></label>
+      </div>
+
+      <label>What are you looking for in a companion dog/cat? (select all that apply)</label>
+      <div class="opts-grid">
+        <label class="option"><input type="checkbox" name="looking_for[]" value="Company for my other animal(s)"><span>Company for my other animal(s)</span></label>
+        <label class="option"><input type="checkbox" name="looking_for[]" value="A new best friend"><span>A new best friend</span></label>
+        <label class="option"><input type="checkbox" name="looking_for[]" value="Good with cats"><span>A pet that gets along with cats</span></label>
+        <label class="option"><input type="checkbox" name="looking_for[]" value="Good with kids"><span>A pet good with children</span></label>
+        <label class="option"><input type="checkbox" name="looking_for[]" value="To help rescue a pet in need"><span>To help rescue a pet in need</span></label>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2><span class="tag">Step 3</span> Home & Household</h2>
+
+      <label>Household Type *</label>
+      <div class="opts-grid">
+        <label class="option"><input type="checkbox" name="house_type[]" value="Apartment"><span>Apartment</span></label>
+        <label class="option"><input type="checkbox" name="house_type[]" value="Condo/Townhouse (fenced yard)"><span>Condo/Townhouse (fenced yard)</span></label>
+        <label class="option"><input type="checkbox" name="house_type[]" value="Condo/Townhouse (no yard)"><span>Condo/Townhouse (no yard)</span></label>
+        <label class="option"><input type="checkbox" name="house_type[]" value="Residential w/ fenced yard"><span>Residential home with fenced yard</span></label>
+        <label class="option"><input type="checkbox" name="house_type[]" value="Residential w/ yard, no fence"><span>Residential home with yard, no fence</span></label>
+        <label class="option"><input type="checkbox" name="house_type[]" value="Other"><span>Other</span></label>
+      </div>
+
+      <label>Household Members *</label>
+      <textarea name="house_members" rows="3" placeholder="Ages / number of people" required></textarea>
+
+      <label>Is there anything else you'd like to share with us?</label>
+      <textarea name="notes" rows="3" placeholder="Any special needs, schedule, preferences"></textarea>
+    </div>
+
+    <div class="section">
+      <h2><span class="tag">Final</span> Agreement</h2>
+      <label class="option" style="margin-top:6px">
+        <input type="checkbox" name="agree" value="1" required><span>I acknowledge the guidelines above and am able to proceed with adoption steps.</span>
+      </label>
+
+    
+      <div class="helper">We’ll get back to you via email within 72 hours.</div>
+
+      <button type="submit">Submit Adoption Application</button>
+    </div>
+  </form>
+</div>
+</body></html>
+
+
+===== FILE: app\views\adoption\thanks.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<title>Application Submitted • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6}
+.wrap{padding:40px 6%}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);padding:26px 28px;max-width:980px;margin:80px auto 24px}
+.grid{display:grid;grid-template-columns:1fr 1.1fr;gap:24px;align-items:center}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+.pic img{width:100%;max-width:380px;height:340px;object-fit:cover;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08)}
+.badge{display:inline-block;background:#26c1a8;color:#fff;padding:8px 16px;border-radius:999px;font-weight:700;margin-top:10px}
+h1{color:#41403e;font-size:1.8rem;font-weight:600;margin-bottom:.6rem}
+p{color:#555;line-height:1.5;margin-bottom:10px}
+a.btn{display:inline-block;text-decoration:none;background:#26c1a8;color:#fff;padding:12px 24px;border-radius:12px;font-weight:600}
+a.btn:hover{background:#1ea893}
+.small{color:#777;font-size:.9rem;margin-top:8px}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="wrap">
+  <div class="card">
+    <div class="grid">
+      <div class="pic">
+        <img src="<?=htmlspecialchars($app['pet_image'] ?: 'https://images.unsplash.com/photo-1525253013412-55c1a69a5738?auto=format&fit=crop&w=640&q=80')?>" alt="">
+        <div class="badge">Application sent!</div>
+      </div>
+      <div>
+        <h1>Thanks for applying to adopt <?=htmlspecialchars($app['pet_name'])?> 🐾</h1>
+        <p>We received your application for <?=htmlspecialchars($app['pet_name'])?>. Our team will review your info and contact you by email shortly.</p>
+        <p class="small">Submitted by <b><?=htmlspecialchars($app['applicant_name'])?></b> • <?=htmlspecialchars($app['email'])?></p>
+        <a class="btn" href="<?=BASE_URL?>/Pet/index">Back to Pets</a>
+      </div>
+    </div>
+  </div>
 </div>
 </body></html>
 
@@ -1031,6 +2030,248 @@ a.btn:hover{background:#1ea893}
 </body></html>
 
 
+===== FILE: app\views\donation\give.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<title>Make a Donation • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);padding:26px 28px;max-width:680px;margin:80px auto 20px}
+h1{font-size:1.6rem;font-weight:600;color:#41403e;margin-bottom:12px}
+label{display:block;font-weight:600;color:#41403e;margin-top:14px;font-size:.95rem}
+input,textarea,select{width:100%;padding:.75rem 1rem;border:2px solid #e9e7e6;border-radius:10px;margin-top:.35rem;font-size:.9rem}
+input:focus,textarea:focus,select:focus{border-color:#26c1a8;outline:none}
+button{margin-top:18px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.9rem;font-weight:600;font-size:1rem;border-radius:10px;cursor:pointer;transition:.3s}
+button:hover{background:#1ea893}
+.small{color:#777;font-size:.85rem;margin-top:10px}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="card">
+  <h1>Make a Donation</h1>
+  <form method="POST" action="<?=BASE_URL?>/Donation/submit">
+    <label>Your Name</label>
+    <input type="text" name="name" value="<?=htmlspecialchars($username)?>" placeholder="Optional">
+
+    <label>Email</label>
+    <input type="email" name="email" value="<?=htmlspecialchars($email)?>" placeholder="Optional (for receipt)">
+
+    <label>Choose Shelter</label>
+    <select name="shelter_id" required>
+      <option value="">-- Select a shelter --</option>
+      <?php foreach($shelters as $s): ?>
+        <option value="<?=$s['id']?>"><?=htmlspecialchars($s['name'])?></option>
+      <?php endforeach; ?>
+    </select>
+
+    <label>Amount (USD)</label>
+    <input type="number" name="amount" step="0.01" min="1" required>
+
+    <label>Message (optional)</label>
+    <textarea name="note" rows="3" placeholder="Send a little love note to the shelter 💚"></textarea>
+
+    <button type="submit">Donate Now</button>
+  </form>
+  <div class="small">Your donation goes directly to the selected registered shelter.</div>
+</div>
+</body></html>
+
+
+===== FILE: app\views\donation\index.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<title>Donate • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6}
+
+/* hero with soft overlay image (keeps theme colors) */
+.hero{
+  position:relative; height:60vh; min-height:360px; margin-top:10px;
+  background:url("https://plus.unsplash.com/premium_photo-1661676172038-377ab3d82a18?q=80&w=1170&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D") center/cover no-repeat;
+  display:flex;align-items:center;justify-content:center
+}
+.hero::before{content:'';position:absolute;inset:0;background:rgba(0,0,0,.35)}
+.hero-inner{position:relative;text-align:center;color:#fff;padding:0 1rem;max-width:900px}
+.hero-inner h1{font-size:2.2rem;font-weight:700;margin-bottom:.6rem}
+.hero-inner p{font-size:1rem;line-height:1.6}
+.hero-inner em{color:#bdf0e7;font-style:normal}
+
+/* content */
+.wrap{padding:28px 6%}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);padding:26px 28px;margin:auto;max-width:1020px}
+h2{font-size:1.5rem;color:#41403e;font-weight:600;margin-bottom:10px}
+p{color:#555;line-height:1.45;font-size:.95rem;margin-bottom:10px}
+ul{margin:8px 0 0 18px;color:#555;line-height:1.45;font-size:.95rem}
+
+/* two-column info + image */
+.two{display:grid;grid-template-columns:1.1fr .9fr;gap:22px;align-items:center}
+.side-img{width:100%;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);object-fit:cover}
+
+/* stats */
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px}
+.stat{background:#fafafa;border:1px solid #e0dedc;border-radius:12px;padding:14px;text-align:center}
+.stat .num{font-weight:700;color:#ff8552;font-size:1.2rem}
+.stat .lbl{color:#41403e;font-weight:600;margin-top:4px}
+
+/* button */
+.cta{margin-top:18px;text-align:center}
+a.btn{
+  display:inline-block;background:#26c1a8;color:#fff;text-decoration:none;
+  padding:14px 34px;border-radius:12px;font-weight:600
+}
+a.btn:hover{background:#1ea893}
+
+@media(max-width:920px){.two{grid-template-columns:1fr}.hero{height:46vh}}
+@media(max-width:520px){.stats{grid-template-columns:1fr}}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<section class="hero">
+  <div class="hero-inner">
+    <h1>Donate</h1>
+    <p><em>“They can’t ask for help, but their eyes tell the story. Be the reason their tail wags again.”</em></p>
+  </div>
+</section>
+
+<div class="wrap">
+  <div class="card">
+    <div class="two">
+      <div>
+        <h2>Donate To Our Animal Shelter Partners</h2>
+        <p>
+          At PawCare, your generosity supports <b>registered shelters</b> that rescue, vaccinate,
+          and foster cats and dogs. We keep things simple and transparent so your gift goes where
+          it matters most: <b>belly rubs, full bowls, and safe snoozes</b>.
+        </p>
+        <ul>
+          <li>We forward your donation directly to the shelter you select.</li>
+          <li>Funds help with food, medicine, vaccinations, and foster home care.</li>
+          <li>We track totals publicly—because every wag and purr deserves honesty.</li>
+        </ul>
+
+        <div class="stats">
+          <div class="stat">
+            <div class="num"><?=$stats['donors']?></div>
+            <div class="lbl">Donors so far</div>
+          </div>
+          <div class="stat">
+            <div class="num">$<?=number_format($stats['total'],2)?></div>
+            <div class="lbl">Total raised</div>
+          </div>
+          <div class="stat">
+            <div class="num"><?=$stats['donations']?></div>
+            <div class="lbl">Donations</div>
+          </div>
+        </div>
+
+        <div class="cta">
+          <a href="<?=BASE_URL?>/Donation/give" class="btn">Donate now</a>
+        </div>
+      </div>
+
+      <!-- friendly pet photo -->
+      <img class="side-img" src="https://images.unsplash.com/photo-1543852786-1cf6624b9987?auto=format&fit=crop&w=900&q=80" alt="Happy cat and dog">
+    </div>
+  </div>
+</div>
+</body></html>
+
+
+===== FILE: app\views\donation\thanks.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8">
+<title>Thank You • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6}
+
+/* layout */
+.wrap{padding:40px 6%}
+.card{
+  background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);
+  padding:26px 28px;max-width:980px;margin:80px auto 24px
+}
+.grid{display:grid;grid-template-columns:1fr 1.1fr;gap:24px;align-items:center}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+
+/* image side */
+.pic{
+  position:relative;display:flex;align-items:center;justify-content:center
+}
+.pic img{
+  width:100%;max-width:380px;height:340px;object-fit:cover;border-radius:16px;
+  box-shadow:0 8px 18px rgba(0,0,0,.08)
+}
+.badge{
+  position:absolute;bottom:-12px;left:50%;transform:translateX(-50%);
+  background:#26c1a8;color:#fff;padding:8px 16px;border-radius:999px;
+  font-weight:700;box-shadow:0 6px 14px rgba(0,0,0,.08)
+}
+
+/* text side */
+h1{color:#41403e;font-size:1.8rem;font-weight:600;margin-bottom:.6rem}
+p{color:#555;line-height:1.5;margin-bottom:10px}
+.info{background:#fafafa;border:1px solid #e0dedc;border-radius:12px;padding:12px 14px;margin:10px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px}
+a.btn{
+  display:inline-block;text-decoration:none;font-weight:600;border-radius:12px;
+  padding:12px 24px
+}
+.btn-primary{background:#26c1a8;color:#fff}
+.btn-primary:hover{background:#1ea893}
+.btn-ghost{border:2px solid #26c1a8;color:#26c1a8;background:transparent}
+.btn-ghost:hover{background:#e7f8f4}
+.small{color:#777;font-size:.9rem;margin-top:8px}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<?php
+  $shelter = htmlspecialchars($donation['shelter_name'] ?? 'the shelter');
+  $amount  = number_format($donation['amount'] ?? 0, 2);
+  $when    = isset($donation['created']) ? date('M j, Y • H:i', strtotime($donation['created'])) : '';
+  $id      = $donation['id'] ?? null;
+?>
+
+<div class="wrap">
+  <div class="card">
+    <div class="grid">
+      <!-- Image + amount badge -->
+      <div class="pic">
+        <img src="https://as1.ftcdn.net/v2/jpg/09/13/79/82/1000_F_913798269_4INTAQy7HdwL16cE5FbLPNEXbE8YpStX.jpg"
+             alt="Happy dog and cat celebrating a donation">
+        <div class="badge">+$<?=$amount?></div>
+      </div>
+
+      <!-- Text -->
+      <div>
+        <h1>Tail-wag alert! You just made a pet’s day 🐾</h1>
+        <p>
+          Thank you for donating <b>$<?=$amount?></b> to <b><?=$shelter?></b>.
+          Your kindness helps with food, medicine, safe foster care—and lots of happy zoomies.
+        </p>
+
+        <div class="info">
+          <?php if($id): ?><div class="small">Donation ID: <b>#<?=$id?></b></div><?php endif; ?>
+          <?php if($when): ?><div class="small">Date: <b><?=$when?></b></div><?php endif; ?>
+        </div>
+
+        <div class="row">
+          <a href="<?=BASE_URL?>/Pet/index" class="btn btn-primary">Meet the Pets</a>
+          <a href="<?=BASE_URL?>/Donation/give" class="btn btn-ghost">Donate Again</a>
+        </div>
+        <p class="small">Every gift matters. Thanks for being the human behind a happy tail. 💚</p>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>
+
+
 ===== FILE: app\views\orders\index.php =====
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><title>My Orders • PawCare</title>
@@ -1087,37 +2328,44 @@ tr:nth-child(even){background:#fafafa}
 .nav-links a:hover{color:#ff8552}
 </style>
 
+<?php
+  $isAdmin   = ($_SESSION['role'] ?? '') === 'admin';
+  $logged    = isset($_SESSION['user_id']);
+  $cartCount = array_sum($_SESSION['cart'] ?? []);
+?>
+
 <div class="nav-bar">
+   <!-- Brand → Welcome page -->
    <a class="nav-brand" href="<?=BASE_URL?>/User/welcome">🐾 PawCare</a>
 
    <div class="nav-links">
-        <!-- always show Shop & Pets -->
-        <a href="<?=BASE_URL?>/Shop/index">Shop</a>
-        <a href="<?=BASE_URL?>/Pet/index">Pets</a>
+        <!-- User links (hidden for admins) -->
+        <?php if(!$isAdmin): ?>
+            <a href="<?=BASE_URL?>/Shop/index">Shop</a>
+            <a href="<?=BASE_URL?>/Pet/index">Pets</a>
+            <a href="<?=BASE_URL?>/Donation/index">Donate</a>
+            
+            <?php if($logged): ?><a href="<?=BASE_URL?>/User/profile">Profile</a><?php endif; ?>
+        <?php endif; ?>
 
-        <?php
-          $isAdmin = ($_SESSION['role'] ?? '') === 'admin';
-          $logged  = isset($_SESSION['user_id']);
-        ?>
-
-        <!-- regular users: My Orders -->
         <?php if($logged && !$isAdmin): ?>
             <a href="<?=BASE_URL?>/Order/index">My Orders</a>
         <?php endif; ?>
 
-        <!-- admin-only links -->
+        <!-- Admin-only links -->
         <?php if($isAdmin): ?>
             <a href="<?=BASE_URL?>/Admin/index">Products</a>
             <a href="<?=BASE_URL?>/AdminPet/index">PetInfo</a>
             <a href="<?=BASE_URL?>/AdminOrder/index">Orders</a>
+            <a href="<?=BASE_URL?>/AdminDonation/index">Donations</a>
+            <a href="<?=BASE_URL?>/AdminAdoption/index">AdoptionInfo</a>
+            <a href="<?=BASE_URL?>/AdminRehome/index">ReHome Requests</a>
         <?php endif; ?>
 
-        <!-- Cart only for non-admin users -->
         <?php if(!$isAdmin): ?>
-            <a href="<?=BASE_URL?>/Cart/index">Cart (<?=array_sum($_SESSION['cart'] ?? [])?>)</a>
+            <a href="<?=BASE_URL?>/Cart/index">Cart (<?=$cartCount?>)</a>
         <?php endif; ?>
 
-        <!-- Login / Logout -->
         <?php if($logged): ?>
             <a href="<?=BASE_URL?>/User/logout">Logout</a>
         <?php else: ?>
@@ -1128,6 +2376,7 @@ tr:nth-child(even){background:#fafafa}
 
 
 ===== FILE: app\views\pet\detail.php =====
+
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8">
 <title><?=htmlspecialchars($pet['name'])?> • Pet Profile</title>
@@ -1144,24 +2393,13 @@ body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
 h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
 .item{margin-bottom:12px;font-size:.95rem;color:#555}
 .label{font-weight:600;color:#41403e}
-.status{
-    margin-top:16px;display:inline-block;font-weight:600;padding:8px 14px;
-    border-radius:8px;font-size:.9rem;color:#fff
-}
+.status{margin-top:16px;display:inline-block;font-weight:600;padding:8px 14px;border-radius:8px;font-size:.9rem;color:#fff}
 .adopted{background:#aaa}
 .available{background:#26c1a8}
-
-/* NEW – keep Story formatting */
-.story{
-    white-space:pre-wrap;           /* preserves spaces & new lines */
-    line-height:1.45;
-    margin-top:6px;color:#555
-}
-
-@media(max-width:760px){
-    .card{flex-direction:column}
-    .card img,.info{width:100%}
-}
+.story{white-space:pre-wrap;line-height:1.45;margin-top:6px;color:#555}
+a.btn{display:inline-block;background:#26c1a8;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;margin-top:14px}
+a.btn:hover{background:#1ea893}
+@media(max-width:760px){.card{flex-direction:column}.card img,.info{width:100%}}
 </style></head><body>
 <?php include_once 'app/views/partials/nav.php'; ?>
 
@@ -1174,11 +2412,10 @@ h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
         <div class="item"><span class="label">Breed:</span> <?=htmlspecialchars($pet['breed'])?></div>
         <div class="item"><span class="label">Vaccinated:</span> <?=$pet['vaccinated'] ? 'Yes' : 'No'?></div>
 
-        <div class="item"><span class="label">Foster&nbsp;Home&nbsp;Address:</span> <?=htmlspecialchars($pet['foster_home']) ?: '—'?></div>
+        <div class="item"><span class="label">Location:</span> <?=htmlspecialchars($pet['location']) ?: '—'?></div>
         <div class="item"><span class="label">Phone:</span> <?=htmlspecialchars($pet['phone']) ?: '—'?></div>
         <div class="item"><span class="label">Email:</span> <?=htmlspecialchars($pet['email']) ?: '—'?></div>
 
-        <!-- Story with preserved formatting -->
         <div class="item">
             <span class="label">Story:</span>
             <div class="story"><?=nl2br(htmlspecialchars($pet['story']))?></div>
@@ -1187,6 +2424,12 @@ h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
         <div class="status <?=$pet['adopted'] ? 'adopted' : 'available'?>">
             <?=$pet['adopted'] ? 'Adopted' : 'Available'?>
         </div>
+
+        <?php if(!$pet['adopted']): ?>
+          <div>
+            <a class="btn" href="<?=BASE_URL?>/Adoption/apply?pet_id=<?=$pet['id']?>">Adopt me</a>
+          </div>
+        <?php endif; ?>
     </div>
 </div>
 </body></html>
@@ -1194,51 +2437,195 @@ h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
 
 ===== FILE: app\views\pet\index.php =====
 <!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><title>Pets for Adoption • PawCare</title>
+<meta charset="UTF-8">
+<title>All Pets • PawCare</title>
 <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
 <style>
+:root{ --brand:#26c1a8; --ink:#41403e; --muted:#777; --bg:#f0faf6; --card:#fff; --line:#e9e7e6; }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
-h1{text-align:center;font-size:2rem;font-weight:600;color:#41403e;margin:1.6rem 0}
-.filters{text-align:center;margin-bottom:2rem}
-.filters a{color:#26c1a8;text-decoration:none;font-weight:600;margin:0 .6rem;font-size:.95rem;transition:.2s}
-.filters a:hover{color:#1b907d}
-.filters .active{color:#ff8552}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:24px}
-.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);overflow:hidden;transition:.25s}
-.card:hover{transform:translateY(-6px)}
-.card img{width:100%;height:180px;object-fit:cover}
-.card-body{padding:16px}
-.name{font-weight:600;font-size:1.1rem;color:#41403e}
-.status{margin-top:8px;color:#fff;font-weight:600;padding:6px 10px;border-radius:8px;display:inline-block;font-size:.8rem}
-.adopted{background:#aaa}
-.available{background:#26c1a8}
-a.card-link{text-decoration:none}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);padding:40px 6%}
+h1{font-size:2rem;font-weight:700;color:var(--ink);text-align:center;margin:90px 0 16px}
+
+/* Tabs + search */
+.bar{max-width:1100px;margin:0 auto 14px;display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.tabs{display:flex;gap:10px;flex-wrap:wrap}
+.tab{display:inline-block;padding:8px 14px;border-radius:999px;border:2px solid var(--brand);color:var(--brand);text-decoration:none;font-weight:700}
+.tab.active{background:var(--brand);color:#fff}
+.search{display:flex;gap:8px;align-items:center}
+.search input{width:260px;max-width:60vw;padding:.7rem 1rem;border:2px solid var(--line);border-radius:12px}
+.search input:focus{outline:none;border-color:var(--brand)}
+.search button{padding:.7rem 1rem;border:none;background:var(--brand);color:#fff;border-radius:12px;font-weight:700;cursor:pointer}
+.counter{max-width:1100px;margin:6px auto 14px;color:var(--muted);font-size:.95rem}
+
+/* grid */
+.grid{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.card{background:var(--card);border-radius:14px;box-shadow:0 6px 14px rgba(0,0,0,.08);overflow:hidden}
+.card img{width:100%;height:170px;object-fit:cover}
+.card .b{padding:12px 14px}
+.card .name{font-weight:700;color:var(--ink)}
+.meta{font-size:.9rem;color:#555;margin-top:4px}
+.badge{display:inline-block;margin-top:8px;padding:3px 10px;border-radius:999px;font-weight:700;font-size:.78rem}
+.avail{background:#e7f8f4;color:#1b907d;border:1px solid #bfece1}
+.adopt{background:#ffe6e6;color:#9c2a2a;border:1px solid #ffb2b2}
+.btn{display:block;text-align:center;margin:10px 0 2px;padding:8px 12px;background:var(--brand);color:#fff;text-decoration:none;border-radius:10px;font-weight:700}
+.btn:hover{background:#1ea893}
+.loc{color:#777;font-size:.85rem;margin-top:6px}
 </style>
 </head><body>
 <?php include_once 'app/views/partials/nav.php'; ?>
 
-<h1>🐾 Pets for Adoption</h1>
-<div class="filters">
-  <a href="<?=BASE_URL?>/Pet/index"            class="<?=!$species ? 'active':''?>">All</a>
-  <a href="<?=BASE_URL?>/Pet/index?species=Dog" class="<?=$species==='Dog'?'active':''?>">Dogs</a>
-  <a href="<?=BASE_URL?>/Pet/index?species=Cat" class="<?=$species==='Cat'?'active':''?>">Cats</a>
+<h1>Find Your New Best Friend</h1>
+
+<?php
+  $species  = $data['species']  ?? null;
+  $location = $data['location'] ?? '';
+  $q = urlencode($location);
+  $link = function($sp) use($q){
+    $base = BASE_URL.'/Pet/index';
+    if ($sp)  return $base.'?species='.$sp.($q!=='' ? '&location='.$q : '');
+    return $base.($q!=='' ? '?location='.$q : '');
+  };
+?>
+<div class="bar">
+  <div class="tabs">
+    <a class="tab <?=(!$species?'active':'')?>" href="<?=$link(null)?>">All</a>
+    <a class="tab <?=($species==='Dog'?'active':'')?>" href="<?=$link('Dog')?>">Dog</a>
+    <a class="tab <?=($species==='Cat'?'active':'')?>" href="<?=$link('Cat')?>">Cat</a>
+  </div>
+
+  <form class="search" method="GET" action="<?=BASE_URL?>/Pet/index">
+    <?php if($species): ?><input type="hidden" name="species" value="<?=$species?>"><?php endif;?>
+    <input type="text" name="location" value="<?=htmlspecialchars($location)?>" placeholder="Search by location (e.g., Dhaka)">
+    <button type="submit">Search</button>
+  </form>
+</div>
+
+<div class="counter">
+  <?php $count = count($data['pets']); ?>
+  Showing <b><?=$count?></b> pet<?=$count==1?'':'s'?><?=$location ? " near “".htmlspecialchars($location)."”" : ""?><?=$species ? " in ".$species : ""?>.
 </div>
 
 <div class="grid">
-<?php foreach($pets as $p): ?>
-  <a class="card-link" href="<?=BASE_URL?>/Pet/detail?id=<?=$p['id']?>">
-    <div class="card">
-      <img src="<?=htmlspecialchars($p['image'])?>" alt="">
-      <div class="card-body">
-        <div class="name"><?=htmlspecialchars($p['name'])?></div>
-        <div class="status <?=$p['adopted'] ? 'adopted' : 'available'?>">
-          <?=$p['adopted'] ? 'Adopted' : 'Available'?>
+<?php foreach($data['pets'] as $p): ?>
+  <div class="card">
+    <img src="<?=htmlspecialchars($p['image'])?>" alt="<?=htmlspecialchars($p['name'])?>">
+    <div class="b">
+      <div class="name"><?=htmlspecialchars($p['name'])?> • <?=htmlspecialchars($p['species'])?></div>
+      <div class="meta"><?=htmlspecialchars($p['breed'])?> • <?=htmlspecialchars($p['age'])?></div>
+      <div class="loc">📍 <?=htmlspecialchars($p['location'] ?: '—')?></div>
+      <span class="badge <?=$p['adopted']?'adopt':'avail'?>"><?=$p['adopted']?'Adopted':'Available'?></span>
+      <a class="btn" href="<?=BASE_URL?>/Pet/detail?id=<?=$p['id']?>">View</a>
+    </div>
+  </div>
+<?php endforeach; ?>
+</div>
+
+</body></html>
+
+
+===== FILE: app\views\rehome\request.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>ReHome Your Pet • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);max-width:820px;margin:100px auto 24px;padding:28px}
+h2{color:#41403e;font-size:1.6rem;font-weight:600;margin-bottom:8px;text-align:center}
+p.lead{color:#555;text-align:center;margin-bottom:12px}
+label{display:block;font-weight:600;color:#41403e;margin-top:14px}
+input,select,textarea{width:100%;padding:.8rem 1rem;border:2px solid #e9e7e6;border-radius:10px;margin-top:.4rem;font-size:.95rem}
+input:focus,select:focus,textarea:focus{border-color:#26c1a8;outline:none}
+.row{display:flex;gap:12px;flex-wrap:wrap}
+.col{flex:1 1 250px}
+button{margin-top:18px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.95rem;font-weight:700;border-radius:12px;cursor:pointer}
+button:hover{background:#1ea893}
+.box{background:#fafafa;border:1px dashed #e0dedc;border-radius:12px;padding:12px;margin-top:10px}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="card">
+  <h2>ReHome Your Pet</h2>
+  <p class="lead">Tell us about your pet — we’ll review and add them to our adoption list after approval.</p>
+
+  <form method="POST" action="<?=BASE_URL?>/Rehome/request">
+    <div class="box">
+      <div class="row">
+        <div class="col">
+          <label>Your Name</label>
+          <input type="text" name="owner_name" value="<?=htmlspecialchars($u['username'] ?? '')?>" required>
+        </div>
+        <div class="col">
+          <label>Your Email</label>
+          <input type="email" name="owner_email" value="<?=htmlspecialchars($u['email'] ?? '')?>" required>
         </div>
       </div>
+      <label>Phone</label>
+      <input type="text" name="owner_phone" placeholder="+8801xxxxxxxxx">
+      <label>Address (Foster / Pickup)</label>
+      <input type="text" name="address" placeholder="House, Road, Area, City">
     </div>
-  </a>
-<?php endforeach; ?>
+
+    <label>Pet Name</label>
+    <input type="text" name="name" required>
+
+    <div class="row">
+      <div class="col">
+        <label>Species</label>
+        <select name="species">
+          <option value="Dog">Dog</option>
+          <option value="Cat">Cat</option>
+        </select>
+      </div>
+      <div class="col">
+        <label>Age</label>
+        <input type="text" name="age" placeholder="e.g., 2 years">
+      </div>
+      <div class="col">
+        <label>Breed</label>
+        <input type="text" name="breed" placeholder="e.g., Persian / Mixed">
+      </div>
+    </div>
+
+    <label>Vaccinated</label>
+    <select name="vaccinated">
+      <option value="1">Yes</option>
+      <option value="0">No</option>
+    </select>
+
+    <label>Photo URL</label>
+    <input type="text" name="image" placeholder="https://...jpg" required>
+
+    <label>Story / Notes</label>
+    <textarea name="story" rows="4" placeholder="Temperament, likes, any special care"></textarea>
+
+    <button type="submit">Submit ReHome Request</button>
+  </form>
+</div>
+</body></html>
+
+
+===== FILE: app\views\rehome\thanks.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>ReHome Request Sent • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6}
+.wrap{padding:40px 6%}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);max-width:860px;margin:100px auto 24px;padding:28px;text-align:center}
+h2{color:#41403e;font-size:1.7rem;font-weight:600;margin-bottom:8px}
+p{color:#555}
+a.btn{display:inline-block;margin-top:14px;padding:12px 22px;border-radius:12px;background:#26c1a8;color:#fff;text-decoration:none;font-weight:700}
+a.btn:hover{background:#1ea893}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+<div class="wrap">
+  <div class="card">
+    <h2>Thanks! We received your ReHome request 🐾</h2>
+    <p>Our team will review your submission for <b><?=htmlspecialchars($r['name'])?></b> and get back to you.</p>
+    <a class="btn" href="<?=BASE_URL?>/User/profile">Back to Profile</a>
+  </div>
 </div>
 </body></html>
 
@@ -1349,6 +2736,59 @@ foreach($cats as $c){
 </html>
 
 
+===== FILE: app\views\user\edit.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Edit Profile • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);max-width:720px;margin:100px auto;padding:28px}
+h2{color:#41403e;font-size:1.7rem;font-weight:600;margin-bottom:10px;text-align:center}
+label{display:block;font-weight:600;color:#41403e;margin-top:14px}
+input,textarea{width:100%;padding:.8rem 1rem;border:2px solid #e9e7e6;border-radius:12px;margin-top:.45rem;font-size:.95rem;background:#fff}
+textarea{min-height:110px}
+input:focus,textarea:focus{border-color:#26c1a8;outline:none}
+button{margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s}
+button:hover{background:#1ea893}
+.actions{display:flex;gap:10px;margin-top:10px}
+a.btn{flex:1;display:inline-block;text-align:center;text-decoration:none;border:2px solid #26c1a8;color:#26c1a8;padding:10px 16px;border-radius:12px;font-weight:700}
+a.btn:hover{background:#e7f8f4}
+.small{color:#777;font-size:.88rem;margin-top:6px;text-align:center}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="card">
+  <h2>Edit Profile</h2>
+  <form method="POST" action="<?=BASE_URL?>/User/edit">
+    <label>Name</label>
+    <input type="text" name="username" value="<?=htmlspecialchars($u['username'])?>" required>
+
+    <label>Email</label>
+    <input type="email" name="email" value="<?=htmlspecialchars($u['email'])?>" required>
+
+    <label>Phone</label>
+    <input type="text" name="phone" placeholder="+8801xxxxxxxxx" value="<?=htmlspecialchars($u['phone'] ?? '')?>">
+
+    <label>Address</label>
+    <input type="text" name="address" placeholder="House, Road, Area, City" value="<?=htmlspecialchars($u['address'] ?? '')?>">
+
+    <label>Short Bio</label>
+    <textarea name="bio" placeholder="A few lines about you, your pets, experience, or preferences..."><?=htmlspecialchars($u['bio'] ?? '')?></textarea>
+
+    <button type="submit">Save Changes</button>
+
+    <div class="actions">
+      <a class="btn" href="<?=BASE_URL?>/User/profile">Cancel</a>
+      <a class="btn" href="<?=BASE_URL?>/Rehome/request">ReHome pet?</a>
+    </div>
+
+    <div class="small">Tip: Add your phone & address to speed up adoptions and deliveries.</div>
+  </form>
+</div>
+</body></html>
+
+
 ===== FILE: app\views\user\login.php =====
 <!DOCTYPE html>
 <html lang="en">
@@ -1433,6 +2873,75 @@ foreach($cats as $c){
     </div>
 </body>
 </html>
+
+
+===== FILE: app\views\user\profile.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>My Profile • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+.card{
+  background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);
+  max-width:820px;margin:100px auto 24px;padding:26px
+}
+h2{color:#41403e;font-size:1.6rem;font-weight:600;margin-bottom:8px}
+.small{color:#777;font-size:.88rem}
+.avatar{
+  width:88px;height:88px;border-radius:50%;background:#eaf8f5;border:2px solid #d6f2ea;
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.6rem;color:#26c1a8;margin-bottom:10px
+}
+.field{
+  background:#fafafa;border:1px solid #e9e7e6;border-radius:12px;padding:10px 12px;margin-top:12px
+}
+.label{font-weight:700;color:#41403e;font-size:.9rem}
+.value{color:#555;margin-top:4px;white-space:pre-wrap}
+.bio{white-space:pre-wrap;line-height:1.45;color:#555}
+button.primary{
+  margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;
+  padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s
+}
+button.primary:hover{background:#1ea893}
+a.link{display:block;text-align:center;margin-top:10px;color:#26c1a8;text-decoration:none;font-weight:700}
+a.link:hover{text-decoration:underline}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="card">
+  <div class="avatar"><?=strtoupper(substr(($u['username'] ?? 'U'),0,1))?></div>
+  <h2>Hello, <?=htmlspecialchars($u['username'])?> 👋</h2>
+  <div class="small">Keep your info up to date so we can contact you about orders, adoptions, or rehoming.</div>
+
+  <div class="field">
+    <div class="label">Email</div>
+    <div class="value"><?=htmlspecialchars($u['email'] ?: '—')?></div>
+  </div>
+
+  <div class="field">
+    <div class="label">Phone</div>
+    <div class="value"><?=htmlspecialchars($u['phone'] ?: '—')?></div>
+  </div>
+
+  <div class="field">
+    <div class="label">Address</div>
+    <div class="value"><?=htmlspecialchars($u['address'] ?: '—')?></div>
+  </div>
+
+  <div style="margin-top:14px">
+    <div class="label" style="margin-bottom:6px">Bio</div>
+    <div class="bio"><?=htmlspecialchars($u['bio'] ?: "Tell us about you! (e.g., favorite breed, pet experience)")?></div>
+  </div>
+
+  <!-- Single bottom button to edit -->
+  <form action="<?=BASE_URL?>/User/edit" method="get">
+    <button class="primary" type="submit">Edit Profile</button>
+  </form>
+
+  <!-- Optional small link to ReHome (not a second panel or big button) -->
+  <a class="link" href="<?=BASE_URL?>/Rehome/request">ReHome a pet?</a>
+</div>
+</body></html>
 
 
 ===== FILE: app\views\user\register.php =====

@@ -13,37 +13,44 @@
 .nav-links a:hover{color:#ff8552}
 </style>
 
+<?php
+  $isAdmin   = ($_SESSION['role'] ?? '') === 'admin';
+  $logged    = isset($_SESSION['user_id']);
+  $cartCount = array_sum($_SESSION['cart'] ?? []);
+?>
+
 <div class="nav-bar">
+   <!-- Brand → Welcome page -->
    <a class="nav-brand" href="<?=BASE_URL?>/User/welcome">🐾 PawCare</a>
 
    <div class="nav-links">
-        <!-- always show Shop & Pets -->
-        <a href="<?=BASE_URL?>/Shop/index">Shop</a>
-        <a href="<?=BASE_URL?>/Pet/index">Pets</a>
+        <!-- User links (hidden for admins) -->
+        <?php if(!$isAdmin): ?>
+            <a href="<?=BASE_URL?>/Shop/index">Shop</a>
+            <a href="<?=BASE_URL?>/Pet/index">Pets</a>
+            <a href="<?=BASE_URL?>/Donation/index">Donate</a>
+            
+            <?php if($logged): ?><a href="<?=BASE_URL?>/User/profile">Profile</a><?php endif; ?>
+        <?php endif; ?>
 
-        <?php
-          $isAdmin = ($_SESSION['role'] ?? '') === 'admin';
-          $logged  = isset($_SESSION['user_id']);
-        ?>
-
-        <!-- regular users: My Orders -->
         <?php if($logged && !$isAdmin): ?>
             <a href="<?=BASE_URL?>/Order/index">My Orders</a>
         <?php endif; ?>
 
-        <!-- admin-only links -->
+        <!-- Admin-only links -->
         <?php if($isAdmin): ?>
             <a href="<?=BASE_URL?>/Admin/index">Products</a>
             <a href="<?=BASE_URL?>/AdminPet/index">PetInfo</a>
             <a href="<?=BASE_URL?>/AdminOrder/index">Orders</a>
+            <a href="<?=BASE_URL?>/AdminDonation/index">Donations</a>
+            <a href="<?=BASE_URL?>/AdminAdoption/index">AdoptionInfo</a>
+            <a href="<?=BASE_URL?>/AdminRehome/index">ReHome Requests</a>
         <?php endif; ?>
 
-        <!-- Cart only for non-admin users -->
         <?php if(!$isAdmin): ?>
-            <a href="<?=BASE_URL?>/Cart/index">Cart (<?=array_sum($_SESSION['cart'] ?? [])?>)</a>
+            <a href="<?=BASE_URL?>/Cart/index">Cart (<?=$cartCount?>)</a>
         <?php endif; ?>
 
-        <!-- Login / Logout -->
         <?php if($logged): ?>
             <a href="<?=BASE_URL?>/User/logout">Logout</a>
         <?php else: ?>

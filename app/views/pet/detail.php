@@ -1,3 +1,4 @@
+
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8">
 <title><?=htmlspecialchars($pet['name'])?> • Pet Profile</title>
@@ -14,24 +15,13 @@ body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
 h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
 .item{margin-bottom:12px;font-size:.95rem;color:#555}
 .label{font-weight:600;color:#41403e}
-.status{
-    margin-top:16px;display:inline-block;font-weight:600;padding:8px 14px;
-    border-radius:8px;font-size:.9rem;color:#fff
-}
+.status{margin-top:16px;display:inline-block;font-weight:600;padding:8px 14px;border-radius:8px;font-size:.9rem;color:#fff}
 .adopted{background:#aaa}
 .available{background:#26c1a8}
-
-/* NEW – keep Story formatting */
-.story{
-    white-space:pre-wrap;           /* preserves spaces & new lines */
-    line-height:1.45;
-    margin-top:6px;color:#555
-}
-
-@media(max-width:760px){
-    .card{flex-direction:column}
-    .card img,.info{width:100%}
-}
+.story{white-space:pre-wrap;line-height:1.45;margin-top:6px;color:#555}
+a.btn{display:inline-block;background:#26c1a8;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;margin-top:14px}
+a.btn:hover{background:#1ea893}
+@media(max-width:760px){.card{flex-direction:column}.card img,.info{width:100%}}
 </style></head><body>
 <?php include_once 'app/views/partials/nav.php'; ?>
 
@@ -44,11 +34,10 @@ h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
         <div class="item"><span class="label">Breed:</span> <?=htmlspecialchars($pet['breed'])?></div>
         <div class="item"><span class="label">Vaccinated:</span> <?=$pet['vaccinated'] ? 'Yes' : 'No'?></div>
 
-        <div class="item"><span class="label">Foster&nbsp;Home&nbsp;Address:</span> <?=htmlspecialchars($pet['foster_home']) ?: '—'?></div>
+        <div class="item"><span class="label">Location:</span> <?=htmlspecialchars($pet['location']) ?: '—'?></div>
         <div class="item"><span class="label">Phone:</span> <?=htmlspecialchars($pet['phone']) ?: '—'?></div>
         <div class="item"><span class="label">Email:</span> <?=htmlspecialchars($pet['email']) ?: '—'?></div>
 
-        <!-- Story with preserved formatting -->
         <div class="item">
             <span class="label">Story:</span>
             <div class="story"><?=nl2br(htmlspecialchars($pet['story']))?></div>
@@ -57,6 +46,12 @@ h2{font-size:1.8rem;font-weight:600;margin-bottom:10px;color:#41403e}
         <div class="status <?=$pet['adopted'] ? 'adopted' : 'available'?>">
             <?=$pet['adopted'] ? 'Adopted' : 'Available'?>
         </div>
+
+        <?php if(!$pet['adopted']): ?>
+          <div>
+            <a class="btn" href="<?=BASE_URL?>/Adoption/apply?pet_id=<?=$pet['id']?>">Adopt me</a>
+          </div>
+        <?php endif; ?>
     </div>
 </div>
 </body></html>

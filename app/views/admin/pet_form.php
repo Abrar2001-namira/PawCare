@@ -23,7 +23,7 @@ button:hover{background:#1ea893}
   $p = $data['mode']=='edit' ? $data['pet']
                              : ['id'=>'','name'=>'','species'=>'Dog','age'=>'','breed'=>'',
                                 'vaccinated'=>1,'adopted'=>0,'image'=>'','story'=>'',
-                                'phone'=>'','email'=>'','foster_home'=>''];
+                                'phone'=>'','email'=>'','location'=>''];
   $action = $data['mode']=='add'
             ? BASE_URL.'/AdminPet/add'
             : BASE_URL.'/AdminPet/edit?id='.$p['id'];
@@ -74,8 +74,8 @@ button:hover{background:#1ea893}
       <label>Email</label>
       <input type="email" name="email" value="<?=htmlspecialchars($p['email'])?>">
 
-      <label>Foster Home Address</label>
-      <input type="text" name="foster_home" value="<?=htmlspecialchars($p['foster_home'])?>">
+      <label>Location</label>
+      <input type="text" name="location" value="<?=htmlspecialchars($p['location'])?>">
     </div>
 
     <button type="submit"><?=$data['mode']=='add'?'Save':'Update'?></button>

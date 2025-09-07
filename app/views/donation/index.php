@@ -9,7 +9,7 @@ body{font-family:'Quicksand',sans-serif;background:#f0faf6}
 /* hero with soft overlay image (keeps theme colors) */
 .hero{
   position:relative; height:60vh; min-height:360px; margin-top:10px;
-  background:url("https://plus.unsplash.com/premium_photo-1661676172038-377ab3d82a18?q=80&w=1170&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D") center/cover no-repeat;
+  background:url("https://petfriendlyservices.org/wp-content/uploads/Dog-Cat-Blanket-2500x800-1.jpg") center/cover no-repeat;
   display:flex;align-items:center;justify-content:center
 }
 .hero::before{content:'';position:absolute;inset:0;background:rgba(0,0,0,.35)}

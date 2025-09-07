@@ -392,6 +392,109 @@ class AdoptionController extends Controller
 }
 
 
+===== FILE: app\controllers\AppointmentController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class AppointmentController extends Controller
+{
+    /* Landing: find nearby vets by location */
+    public function index()
+    {
+        $location = trim($_GET['location'] ?? '');
+        $vets = $this->model('Vet')->search($location);
+        $this->view('appointment/index', ['vets'=>$vets, 'location'=>$location]);
+    }
+
+    /* Book: GET=show slots, POST=save booking */
+    public function book()
+    {
+        if (!isset($_GET['vet_id']) && !isset($_POST['vet_id'])) {
+            header("Location: ".BASE_URL."/Appointment/index"); exit;
+        }
+        $vetId = (int)($_GET['vet_id'] ?? $_POST['vet_id']);
+        $vet   = $this->model('Vet')->find($vetId);
+        if (!$vet) { header("Location: ".BASE_URL."/Appointment/index"); exit; }
+
+        // date to show (default today)
+        $date = $_GET['date'] ?? $_POST['appt_date'] ?? date('Y-m-d');
+        $date = date('Y-m-d', strtotime($date));
+
+        // workday slots 9:00–17:00 hourly
+        $slots = ['09:00','10:00','11:00','12:00','13:00','14:00','15:00','16:00','17:00'];
+        $taken = $this->model('Appointment')->takenSlots($vetId, $date);
+
+        if ($_SERVER['REQUEST_METHOD']==='POST') {
+            if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
+
+            $petName = trim($_POST['pet_name'] ?? '');
+            $slot    = $_POST['slot'] ?? '';
+            $notes   = trim($_POST['notes'] ?? '');
+
+            if ($petName==='' || !in_array($slot, $slots, true)) {
+                echo "<script>alert('Please enter your pet name and select an available slot.');history.back();</script>"; exit;
+            }
+            if (in_array($slot, $taken, true)) {
+                echo "<script>alert('Sorry, that slot was just taken. Please choose another.');history.back();</script>"; exit;
+            }
+
+            $id = $this->model('Appointment')->create([
+                'user_id'   => $_SESSION['user_id'],
+                'vet_id'    => $vetId,
+                'pet_name'  => $petName,
+                'appt_date' => $date,
+                'slot'      => $slot,
+                'notes'     => $notes,
+                'status'    => 'booked'
+            ]);
+            header("Location: ".BASE_URL."/Appointment/thanks?id=".$id); exit;
+        }
+
+        $this->view('appointment/book', [
+            'vet'=>$vet, 'date'=>$date, 'slots'=>$slots, 'taken'=>$taken
+        ]);
+    }
+
+    /* Thank you */
+    public function thanks()
+    {
+        $id = (int)($_GET['id'] ?? 0);
+        if (!$id) { header("Location: ".BASE_URL."/Appointment/index"); exit; }
+        $a = $this->model('Appointment')->find($id);
+        if (!$a) { header("Location: ".BASE_URL."/Appointment/index"); exit; }
+        $this->view('appointment/thanks', ['a'=>$a]);
+    }
+
+    /* User’s appointment history */
+    public function history()
+    {
+        if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
+        $list = $this->model('Appointment')->byUser($_SESSION['user_id']);
+        $this->view('appointment/history', ['list'=>$list]);
+    }
+
+    /* NEW: cancel from profile/history */
+    public function cancel()
+    {
+        if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            header("Location: ".BASE_URL."/User/profile"); exit;
+        }
+
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id) {
+            $this->model('Appointment')->cancel($id, $_SESSION['user_id']);
+            // As soon as status becomes 'cancelled', the slot disappears from takenSlots(),
+            // so it becomes available for everyone immediately.
+        }
+
+        header("Location: ".BASE_URL."/User/profile"); exit;
+    }
+}
+
+
 ===== FILE: app\controllers\CartController.php =====
 <?php
 require_once 'core/Controller.php';
@@ -782,6 +885,78 @@ class UserController extends Controller
 }
 
 
+===== FILE: app\controllers\VaccinationController.php =====
+<?php
+require_once 'core/Controller.php';
+require_once 'config.php';
+session_start();
+
+class VaccinationController extends Controller
+{
+    private function guard() {
+        if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
+    }
+
+    /* List + Add form */
+    public function index()
+    {
+        $this->guard();
+
+        $m = $this->model('Vaccination');
+
+        if ($_SERVER['REQUEST_METHOD']==='POST') {
+            $pet    = trim($_POST['pet_name'] ?? '');
+            $vac    = trim($_POST['vaccine']  ?? '');
+            $dose   = trim($_POST['dose']     ?? '');
+            $due    = trim($_POST['due_date'] ?? '');
+            $notes  = trim($_POST['notes']    ?? '');
+
+            if ($pet==='' || $vac==='' || $due==='') {
+                echo "<script>alert('Please fill Pet Name, Vaccine and Due Date');history.back();</script>"; exit;
+            }
+
+            $m->create([
+                'user_id'  => $_SESSION['user_id'],
+                'pet_name' => $pet,
+                'vaccine'  => $vac,
+                'dose'     => $dose,
+                'due_date' => date('Y-m-d', strtotime($due)),
+                'notes'    => $notes
+            ]);
+
+            header("Location: ".BASE_URL."/Vaccination/index"); exit;
+        }
+
+        $list = $m->byUser($_SESSION['user_id']);
+        $this->view('vaccination/index', ['list'=>$list]);
+    }
+
+    public function done()
+    {
+        $this->guard();
+        $id = (int)($_GET['id'] ?? 0);
+        if ($id) $this->model('Vaccination')->setStatus($id, $_SESSION['user_id'], 'done');
+        header("Location: ".BASE_URL."/Vaccination/index"); exit;
+    }
+
+    public function schedule()
+    {
+        $this->guard();
+        $id = (int)($_GET['id'] ?? 0);
+        if ($id) $this->model('Vaccination')->setStatus($id, $_SESSION['user_id'], 'scheduled');
+        header("Location: ".BASE_URL."/Vaccination/index"); exit;
+    }
+
+    public function delete()
+    {
+        $this->guard();
+        $id = (int)($_GET['id'] ?? 0);
+        if ($id) $this->model('Vaccination')->delete($id, $_SESSION['user_id']);
+        header("Location: ".BASE_URL."/Vaccination/index"); exit;
+    }
+}
+
+
 ===== FILE: app\models\Adoption.php =====
 <?php
 require_once 'core/Database.php';
@@ -843,6 +1018,96 @@ class Adoption extends Database
              WHERE pet_id=? AND id<>? AND status='pending'"
         );
         $q->execute([$petId, $acceptedId]);
+    }
+}
+
+
+===== FILE: app\models\Appointment.php =====
+<?php
+require_once 'core/Database.php';
+
+class Appointment extends Database
+{
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO appointments
+             (user_id, vet_id, pet_name, appt_date, slot, notes, status, created)
+             VALUES (?,?,?,?,?,?,?,NOW())"
+        );
+        $q->execute([
+            $d['user_id'], $d['vet_id'], $d['pet_name'],
+            $d['appt_date'], $d['slot'], $d['notes'], $d['status']
+        ]);
+        return $this->pdo->lastInsertId();
+    }
+
+    /* used by the booking page to disable busy times */
+    public function takenSlots($vetId, $date)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT slot FROM appointments
+              WHERE vet_id=? AND appt_date=? AND status IN ('booked','completed')"
+        );
+        $q->execute([$vetId,$date]);
+        return array_column($q->fetchAll(PDO::FETCH_ASSOC), 'slot');
+    }
+
+    public function byUser($uid)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT a.*, v.name AS vet_name, v.city AS vet_city
+               FROM appointments a
+               JOIN vets v ON v.id=a.vet_id
+              WHERE a.user_id=?
+              ORDER BY a.appt_date DESC, STR_TO_DATE(a.slot,'%H:%i') DESC"
+        );
+        $q->execute([$uid]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /* Upcoming (for quick list on profile) */
+    public function upcomingByUser($uid, $limit = 5)
+    {
+        $sql =
+        "SELECT a.*, v.name AS vet_name, v.city AS vet_city
+           FROM appointments a
+           JOIN vets v ON v.id=a.vet_id
+          WHERE a.user_id=?
+            AND (
+              a.appt_date > CURDATE() OR
+              (a.appt_date = CURDATE() AND STR_TO_DATE(a.slot,'%H:%i') >= CURTIME())
+            )
+          ORDER BY a.appt_date ASC, STR_TO_DATE(a.slot,'%H:%i') ASC
+          LIMIT ".(int)$limit;
+
+        $q = $this->pdo->prepare($sql);
+        $q->execute([$uid]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function find($id)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT a.*, v.name AS vet_name, v.city AS vet_city, v.address AS vet_address
+               FROM appointments a
+               JOIN vets v ON v.id=a.vet_id
+              WHERE a.id=?"
+        );
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
+    }
+
+    /* NEW: cancel (owner only, only when booked) */
+    public function cancel($id, $userId)
+    {
+        $q = $this->pdo->prepare(
+            "UPDATE appointments
+                SET status='cancelled'
+              WHERE id=? AND user_id=? AND status='booked'"
+        );
+        $q->execute([$id, $userId]);
+        return $q->rowCount() > 0;
     }
 }
 
@@ -1199,6 +1464,88 @@ class User extends Database
             $d['bio'],
             $id
         ]);
+    }
+}
+
+
+===== FILE: app\models\Vaccination.php =====
+<?php
+require_once 'core/Database.php';
+
+class Vaccination extends Database
+{
+    public function create($d)
+    {
+        $q = $this->pdo->prepare(
+            "INSERT INTO vaccinations (user_id, pet_name, vaccine, dose, due_date, notes, status)
+             VALUES (?,?,?,?,?,?, 'scheduled')"
+        );
+        $q->execute([
+            $d['user_id'], $d['pet_name'], $d['vaccine'],
+            $d['dose'], $d['due_date'], $d['notes']
+        ]);
+        return $this->pdo->lastInsertId();
+    }
+
+    public function byUser($uid)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT * FROM vaccinations WHERE user_id=? ORDER BY due_date ASC, id DESC"
+        );
+        $q->execute([$uid]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    /* Next reminders: due in next 30 days (and not done) */
+    public function upcomingDue($uid, $days = 30, $limit = 5)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT * FROM vaccinations
+              WHERE user_id=? AND status<>'done'
+                AND due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL ? DAY)
+              ORDER BY due_date ASC
+              LIMIT ".(int)$limit
+        );
+        $q->execute([$uid, (int)$days]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function setStatus($id, $uid, $status)
+    {
+        $q = $this->pdo->prepare("UPDATE vaccinations SET status=? WHERE id=? AND user_id=?");
+        return $q->execute([$status, $id, $uid]);
+    }
+
+    public function delete($id, $uid)
+    {
+        $q = $this->pdo->prepare("DELETE FROM vaccinations WHERE id=? AND user_id=?");
+        return $q->execute([$id, $uid]);
+    }
+}
+
+
+===== FILE: app\models\Vet.php =====
+<?php
+require_once 'core/Database.php';
+
+class Vet extends Database
+{
+    public function search($location = '')
+    {
+        if ($location==='') {
+            return $this->pdo->query("SELECT * FROM vets ORDER BY city,name")->fetchAll(PDO::FETCH_ASSOC);
+        }
+        $q = $this->pdo->prepare("SELECT * FROM vets WHERE LOWER(city) LIKE LOWER(?) OR LOWER(address) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?) ORDER BY city,name");
+        $like = "%".$location."%";
+        $q->execute([$like,$like,$like]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    public function find($id)
+    {
+        $q = $this->pdo->prepare("SELECT * FROM vets WHERE id=?");
+        $q->execute([$id]);
+        return $q->fetch(PDO::FETCH_ASSOC);
     }
 }
 
@@ -1938,6 +2285,387 @@ a.btn:hover{background:#1ea893}
 </body></html>
 
 
+===== FILE: app\views\appointment\book.php =====
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Book Appointment • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --brand:#26c1a8; --brand2:#1ea893;
+  --ink:#163c35; --muted:#6c7e7b; --bg:#f0faf6; --card:#fff; --line:#e9e7e6; --danger:#ff6b6b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);color:var(--ink);padding:40px 6%}
+.wrap{max-width:960px;margin:92px auto 26px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;box-shadow:0 10px 20px rgba(0,0,0,.06);padding:18px}
+.header{display:grid;grid-template-columns:240px 1fr;gap:16px}
+@media (max-width:800px){.header{grid-template-columns:1fr}}
+.hero{width:100%;aspect-ratio:4/3;border-radius:12px;overflow:hidden;background:#f6f8f8}
+.hero img{width:100%;height:100%;object-fit:cover;display:block}
+h1{font-size:1.5rem;margin-bottom:6px}
+.meta{color:#4c5e5b;font-size:.95rem;margin-top:6px}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem;border:1px solid #bfece1;background:#e7f8f4;color:#1b907d}
+.badge.red{border-color:#ffc3c3;background:#ffe9e9;color:#c43a3a}
+.helpline{margin-top:8px;font-weight:700}
+.helpline a{color:var(--brand);text-decoration:none}
+
+/* date switcher */
+.switcher{margin:14px 0 8px;display:flex;gap:10px;flex-wrap:wrap}
+.switcher input{padding:.7rem;border:2px solid var(--line);border-radius:12px}
+.switcher button{padding:.7rem 1rem;border:none;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;cursor:pointer}
+.switcher button:hover{background:var(--brand2)}
+
+/* slots */
+h2{font-size:1.1rem;margin:12px 0 8px}
+.legend{font-size:.85rem;color:#6a7a77;margin-bottom:6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}
+.slot{position:relative}
+.slot input{display:none}
+.slot label{
+  display:block;text-align:center;padding:.8rem;border-radius:12px;border:2px solid var(--brand);
+  color:var(--brand);cursor:pointer;font-weight:700;background:#e7f8f4;
+}
+.slot input:checked + label{background:var(--brand);color:#fff}
+.slot.busy label{border-color:#ffc3c3;background:#ffe9e9;color:#c43a3a;cursor:not-allowed}
+.slot.busy label:after{content:"Booked";position:absolute;right:8px;top:8px;font-size:.7rem;background:#ffdad9;color:#9c2a2a;padding:2px 6px;border-radius:999px}
+.actions{margin-top:12px;display:grid;gap:10px}
+input[type="text"],textarea{width:100%;padding:.85rem;border:2px solid var(--line);border-radius:12px}
+input[type="text"]:focus,textarea:focus{outline:none;border-color:var(--brand)}
+button.primary{padding:1rem;border:none;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;cursor:pointer}
+button.primary:hover{background:var(--brand2)}
+</style>
+</head>
+<body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+<div class="wrap">
+  <div class="card">
+    <div class="header">
+      <figure class="hero">
+        <?php $placeholder='https://images.unsplash.com/photo-1559757148-5c350d0d3c56?q=80&w=1200&auto=format&fit=crop';
+              $img = $vet['photo'] ?: $placeholder; ?>
+        <img src="<?=htmlspecialchars($img)?>" alt="<?=htmlspecialchars($vet['name'])?>" onerror="this.src='<?=htmlspecialchars($placeholder)?>'">
+      </figure>
+      <div>
+        <h1><?=htmlspecialchars($vet['name'])?>
+          <?php
+            $is247 = (isset($vet['is_24_7']) && (int)$vet['is_24_7']===1) || (!empty($vet['hours']) && stripos($vet['hours'],'24/7')!==false);
+            if($is247): ?><span class="badge">24/7</span><?php endif; ?>
+        </h1>
+        <div class="meta">📍 <?=htmlspecialchars($vet['city'])?> — <?=htmlspecialchars($vet['address'])?></div>
+        <?php if(!empty($vet['phone'])): ?><div class="meta">☎️ <?=htmlspecialchars($vet['phone'])?></div><?php endif; ?>
+        <?php if(!empty($vet['hours'])): ?><div class="meta">⏰ Hours: <?=htmlspecialchars($vet['hours'])?></div><?php endif; ?>
+        <div class="helpline">Online Helpline: <a href="tel:+880170000000">+880 1700-000000</a> <span class="badge">24/7</span></div>
+
+        <!-- date switcher -->
+        <form class="switcher" method="get" action="<?=BASE_URL?>/Appointment/book">
+          <input type="hidden" name="vet_id" value="<?=$vet['id']?>">
+          <input type="date" name="date" value="<?=$date?>">
+          <button type="submit">Check Date</button>
+        </form>
+
+        <h2>Available slots for checkup — <?=date('M d, Y', strtotime($date))?></h2>
+        <div class="legend">Green = Available &nbsp;&nbsp;|&nbsp;&nbsp; <span class="badge red" style="border:none">Red</span> = Booked</div>
+
+        <!-- booking form -->
+        <form method="post" action="<?=BASE_URL?>/Appointment/book">
+          <input type="hidden" name="vet_id" value="<?=$vet['id']?>">
+          <input type="hidden" name="appt_date" value="<?=$date?>">
+
+          <div class="grid">
+            <?php foreach($slots as $s):
+                  $busy = in_array($s,$taken,true); ?>
+              <div class="slot <?=$busy?'busy':''?>">
+                <?php if($busy): ?>
+                  <input disabled type="radio" id="s<?=$s?>">
+                  <label for="s<?=$s?>"><?=$s?></label>
+                <?php else: ?>
+                  <input type="radio" name="slot" id="s<?=$s?>" value="<?=$s?>">
+                  <label for="s<?=$s?>"><?=$s?></label>
+                <?php endif; ?>
+              </div>
+            <?php endforeach; ?>
+          </div>
+
+          <div class="actions">
+            <input type="text" name="pet_name" placeholder="Your pet's name *" required>
+            <textarea name="notes" rows="2" placeholder="Notes for the vet (optional)"></textarea>
+            <button class="primary" type="submit">Confirm Booking</button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
+
+
+===== FILE: app\views\appointment\history.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Appointment History • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+.container{max-width:1050px;margin:90px auto 40px}
+h1{font-size:2rem;font-weight:600;color:#41403e;margin-bottom:16px;text-align:center}
+.sub{color:#6f7b78;font-size:.95rem;text-align:center;margin-bottom:24px}
+
+.table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 6px 15px rgba(0,0,0,.08)}
+th,td{padding:14px 16px;font-size:.92rem;vertical-align:top}
+th{background:#26c1a8;color:#fff;text-align:left}
+tr:nth-child(even){background:#fafafa}
+
+.when{color:#1b3f39;font-weight:700}
+.where{color:#445b58}
+.pet{color:#445b58}
+.note{color:#6a6a6a;font-size:.85rem}
+
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem;margin-left:6px}
+.booked{background:#e7f8f4;border:1px solid #bfece1;color:#1b907d}
+.completed{background:#e8eafc;border:1px solid #c7cbff;color:#343a8b}
+.cancelled{background:#ffe6e6;border:1px solid #ffb2b2;color:#9c2a2a}
+.expired{background:#fff3d6;border:1px solid #f5d48a;color:#9b6b00}
+
+.btn{display:inline-block;border:2px solid #26c1a8;color:#26c1a8;padding:.55rem .9rem;border-radius:10px;font-weight:700;text-decoration:none}
+.btn:hover{background:#eaf8f5}
+.empty{background:#fff;border:1px solid #e9e7e6;border-radius:12px;padding:18px;text-align:center;color:#60706d}
+.topbar{display:flex;justify-content:flex-end;margin:10px 0 16px}
+</style>
+</head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="container">
+  <h1>Appointment History</h1>
+  <div class="sub">All of your bookings in one place. Past, cancelled, and completed visits are listed below.</div>
+
+  <div class="topbar">
+    <a class="btn" href="<?=BASE_URL?>/Appointment/index">Book a Vet</a>
+  </div>
+
+<?php if (empty($list)): ?>
+  <div class="empty">No appointments yet. Click “Book a Vet” to get started.</div>
+<?php else: ?>
+
+  <table class="table">
+    <thead>
+      <tr>
+        <th style="width:180px">When</th>
+        <th>Clinic</th>
+        <th>For</th>
+        <th style="width:120px">Status</th>
+        <th style="width:28%">Notes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <?php
+        $today  = new DateTime('today');
+        $now    = new DateTime(); // current date + time
+        foreach ($list as $r):
+          // Format date & time
+          $dStr = date('M d, Y', strtotime($r['appt_date']));
+          $tStr = date('g:i A',      strtotime($r['slot']));
+
+          // Determine visual status. If it's still "booked" but in the past, show "Expired".
+          $status = strtolower($r['status']);
+          $badge  = $status; // default class matches status
+
+          // Build DateTime for the appointment moment
+          $apptDT = DateTime::createFromFormat('Y-m-d H:i', $r['appt_date'].' '.$r['slot']);
+          if ($status === 'booked' && $apptDT < $now) {
+              $badge  = 'expired';
+              $status = 'expired';
+          }
+      ?>
+      <tr>
+        <td class="when"><?=$dStr?> • <?=$tStr?></td>
+        <td class="where"><strong><?=htmlspecialchars($r['vet_name'])?></strong> (<?=htmlspecialchars($r['vet_city'])?>)</td>
+        <td class="pet"><?=htmlspecialchars($r['pet_name'])?></td>
+        <td><span class="badge <?=$badge?>"><?=ucfirst($status)?></span></td>
+        <td class="note"><?=htmlspecialchars($r['notes'] ?: '—')?></td>
+      </tr>
+      <?php endforeach; ?>
+    </tbody>
+  </table>
+
+<?php endif; ?>
+</div>
+</body></html>
+
+
+===== FILE: app\views\appointment\index.php =====
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Find a Vet • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --brand:#26c1a8; --brand2:#1ea893;
+  --ink:#163c35; --muted:#6c7e7b;
+  --bg:#f0faf6; --card:#ffffff; --line:#e9e7e6; --danger:#ff6b6b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);color:var(--ink);padding:40px 6%}
+
+/* hero */
+.hero{max-width:1180px;margin:92px auto 24px;display:grid;grid-template-columns:1.1fr .9fr;gap:28px;align-items:center}
+@media (max-width:980px){.hero{grid-template-columns:1fr}}
+h1{font-size:2.4rem;line-height:1.15;margin-bottom:10px}
+.lead{color:var(--muted)}
+.hero-pic{width:100%;aspect-ratio:4/3;border-radius:24px;overflow:hidden;background:#eaf8f5;box-shadow:0 18px 26px rgba(0,0,0,.10)}
+.hero-pic img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* search bar */
+.formbar{margin-top:16px;display:flex;gap:10px}
+.formbar input{flex:1;padding:1rem;border:2px solid var(--line);border-radius:14px;background:#fff}
+.formbar input:focus{outline:none;border-color:var(--brand)}
+.formbar button{padding:1rem 1.2rem;border:none;border-radius:14px;background:var(--brand);color:#fff;font-weight:700;cursor:pointer}
+.formbar button:hover{background:var(--brand2)}
+
+/* helpline + 24/7 */
+.info-strip{max-width:1180px;margin:6px auto 18px;display:grid;grid-template-columns:2fr 1fr;gap:14px}
+@media (max-width:980px){.info-strip{grid-template-columns:1fr}}
+.tile{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:0 10px 18px rgba(0,0,0,.06)}
+.tile h3{font-size:1.1rem;margin-bottom:6px}
+.small{color:#6b7a77;font-size:.92rem}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem;margin-right:6px;border:1px solid #bfece1;background:#e7f8f4;color:#1b907d}
+.badge.red{border-color:#ffc3c3;background:#ffe9e9;color:#c43a3a}
+
+/* count + chip */
+.bar{max-width:1180px;margin:6px auto 10px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px}
+.count{color:var(--muted)}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#e7f8f4;border:1px solid #bfece1;color:#1b907d;padding:6px 10px;border-radius:999px;font-weight:700;font-size:.85rem}
+
+/* vet grid */
+.grid{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:18px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+.thumb{width:100%;aspect-ratio:16/10;background:#f6f8f8}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.b{padding:14px 16px}
+.name{font-weight:700}
+.meta{color:#4c5e5b;font-size:.93rem;margin-top:6px}
+.btn{display:block;margin-top:12px;text-align:center;background:var(--brand);color:#fff;text-decoration:none;font-weight:700;padding:11px;border-radius:12px}
+.btn:hover{background:var(--brand2)}
+.tag247{margin-left:8px}
+.empty{max-width:800px;margin:18px auto;background:#fff;border:1px dashed var(--line);border-radius:14px;padding:16px;text-align:center;color:#60706d}
+</style>
+</head>
+<body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<section class="hero">
+  <div>
+    <h1>Pet Clinic</h1>
+    <p class="lead">Search vets near you, see who’s <b>open 24/7</b>, call the online helpline, and book a slot.</p>
+    <form class="formbar" method="GET" action="<?=BASE_URL?>/Appointment/index">
+      <input type="text" name="location" value="<?=htmlspecialchars($location ?? '')?>" placeholder="Search by city or area (e.g., Dhaka)" aria-label="Search location">
+      <button type="submit">Find Vets</button>
+    </form>
+  </div>
+  <figure class="hero-pic">
+    <img src="https://www.waterwayanimalhospital.com/wp-content/uploads/sites/357/2022/12/AdobeStock_287230497-scaled.jpeg" alt="Happy dog at the clinic">
+  </figure>
+</section>
+
+<?php
+  // Compute 24/7 clinics from the search result (works if your vets table has `hours` like "24/7"
+  // or a boolean column `is_24_7` = 1. If missing, nothing breaks.)
+  $open247 = array_values(array_filter($vets ?? [], function($v){
+      if (isset($v['is_24_7']) && (int)$v['is_24_7']===1) return true;
+      if (!empty($v['hours']) && stripos($v['hours'],'24/7')!==false) return true;
+      return false;
+  }));
+?>
+
+<section class="info-strip">
+  <div class="tile">
+    <h3>📞 Online Helpline</h3>
+    <div class="small">We’re here to guide you to an available vet and answer quick questions.</div>
+    <div style="margin-top:8px;font-weight:700;font-size:1.05rem">
+      <a href="tel:+880170000000" style="color:var(--brand);text-decoration:none">+880 1700-000000</a>
+      <span class="badge">24/7</span>
+    </div>
+  </div>
+
+  <div class="tile">
+    <h3>🏥 24/7 Clinics<?= $location ? " near “".htmlspecialchars($location)."”" : "" ?></h3>
+    <?php if ($open247): ?>
+      <div class="small">
+        <?php foreach($open247 as $i=>$c): ?>
+          <span class="badge"><?=htmlspecialchars($c['name'])?></span>
+        <?php endforeach; ?>
+      </div>
+    <?php else: ?>
+      <div class="small">No specific 24/7 clinic in this search. Call the helpline for immediate assistance.</div>
+    <?php endif; ?>
+  </div>
+</section>
+
+<section class="bar">
+  <?php $count = count($vets ?? []); ?>
+  <div class="count">Showing <b><?=$count?></b> vet<?=($count==1?'':'s')?><?= $location ? " near “".htmlspecialchars($location)."”" : "" ?>.</div>
+  <?php if(!empty($location)): ?><div class="chip">📍 <?=htmlspecialchars($location)?></div><?php endif; ?>
+</section>
+
+<?php if(!$vets): ?>
+  <div class="empty">No vets found. Try a nearby city or a shorter search.</div>
+<?php endif; ?>
+
+<section class="grid">
+  <?php
+    $placeholder='https://www.waterwayanimalhospital.com/wp-content/uploads/sites/357/2022/12/AdobeStock_287230497-scaled.jpeg';
+    foreach($vets as $v):
+      $img = $v['photo'] ?: $placeholder;
+      $is247 = (isset($v['is_24_7']) && (int)$v['is_24_7']===1) || (!empty($v['hours']) && stripos($v['hours'],'24/7')!==false);
+  ?>
+  <article class="card">
+    <div class="thumb"><img src="<?=htmlspecialchars($img)?>" alt="<?=htmlspecialchars($v['name'])?>" onerror="this.src='<?=htmlspecialchars($placeholder)?>'"></div>
+    <div class="b">
+      <div class="name"><?=htmlspecialchars($v['name'])?> <?php if($is247): ?><span class="badge tag247">24/7</span><?php endif; ?></div>
+      <div class="meta">📍 <?=htmlspecialchars($v['city'])?> — <?=htmlspecialchars($v['address'])?></div>
+      <?php if(!empty($v['phone'])): ?><div class="meta">☎️ <?=htmlspecialchars($v['phone'])?></div><?php endif; ?>
+      <?php if(!empty($v['hours'])): ?><div class="small" style="margin-top:4px">Hours: <?=htmlspecialchars($v['hours'])?></div><?php endif; ?>
+      <a class="btn" href="<?=BASE_URL?>/Appointment/book?vet_id=<?=$v['id']?>">View Available Slots</a>
+    </div>
+  </article>
+  <?php endforeach; ?>
+</section>
+
+</body>
+</html>
+
+
+===== FILE: app\views\appointment\thanks.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Appointment Confirmed • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{--brand:#26c1a8;--bg:#f0faf6;--card:#fff}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);padding:40px 6%}
+.card{max-width:760px;margin:110px auto;background:var(--card);border-radius:18px;box-shadow:0 10px 22px rgba(0,0,0,.08);padding:28px;text-align:center}
+h1{font-size:1.9rem;margin-bottom:8px}
+p{color:#555}
+.badge{display:inline-block;margin-top:10px;background:#e7f8f4;border:1px solid #bfece1;color:#1b907d;padding:8px 14px;border-radius:999px;font-weight:700}
+a.btn{display:inline-block;margin-top:16px;padding:11px 16px;background:var(--brand);color:#fff;text-decoration:none;border-radius:12px;font-weight:700}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+<div class="card">
+  <h1>Appointment Confirmed 🎉</h1>
+  <p>We booked <b><?=htmlspecialchars($a['pet_name'])?></b> with <b><?=htmlspecialchars($a['vet_name'])?></b> in <b><?=htmlspecialchars($a['vet_city'])?></b>.</p>
+  <div class="badge"><?=htmlspecialchars($a['appt_date'])?> at <?=htmlspecialchars($a['slot'])?></div>
+  <p style="margin-top:12px">You can view your upcoming and past bookings anytime.</p>
+  <a class="btn" href="<?=BASE_URL?>/Appointment/history">View Appointment History</a>
+</div>
+</body></html>
+
+
 ===== FILE: app\views\cart\checkout.php =====
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><title>Checkout • PawCare</title>
@@ -2313,66 +3041,144 @@ tr:nth-child(even){background:#fafafa}
 
 
 ===== FILE: app\views\partials\nav.php =====
-<?php if (session_status() === PHP_SESSION_NONE) session_start(); ?>
+<?php
+/* Nav bar (theme-friendly) + Vaccination "today" notifier */
+
+if (session_status() === PHP_SESSION_NONE) { session_start(); }
+require_once __DIR__ . '/../../../config.php';
+
+/* --- Vaccination bell flag (simple & fast) --- */
+$hasTodayVaccination = false;
+if (!empty($_SESSION['user_id'])) {
+    // lightweight direct query using the existing Database base class
+    require_once __DIR__ . '/../../../core/Database.php';
+    class _MiniDB extends Database { public function p(){ return $this->pdo; } }
+    $db = (new _MiniDB())->p();
+
+    $q = $db->prepare("
+        SELECT 1
+          FROM vaccinations
+         WHERE user_id = ?
+           AND status <> 'done'
+           AND due_date = CURDATE()
+         LIMIT 1
+    ");
+    $q->execute([$_SESSION['user_id']]);
+    $hasTodayVaccination = (bool)$q->fetchColumn();
+}
+
+$user   = $_SESSION['user']    ?? null;
+$role   = $_SESSION['role']    ?? 'guest';
+$isAuth = !empty($_SESSION['user_id']);
+
+/* Helper: hide some menu items for admin per your earlier rule */
+$hideShopPetsDonateForAdmin = ($role === 'admin');
+
+/* Cart count (sum quantities) */
+$cartCount = 0;
+if (!empty($_SESSION['cart']) && is_array($_SESSION['cart'])) {
+    foreach ($_SESSION['cart'] as $qty) { $cartCount += (int)$qty; }
+}
+?>
 <style>
-.nav-bar{
-    background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.05);
-    padding:14px 6%;display:flex;justify-content:space-between;align-items:center;
-    font-family:'Quicksand',sans-serif
+/* keep your theme: Quicksand, mint accents, rounded pills */
+.navbar{
+  position:sticky; top:0; z-index:999;
+  background:#ffffff; border-bottom:1px solid #e9e7e6;
+  padding:10px 6%; display:flex; align-items:center; gap:18px;
+  font-family:'Quicksand',sans-serif;
 }
-.nav-brand{font-weight:700;color:#26c1a8;text-decoration:none;font-size:1.2rem}
+.nav-brand{
+  font-weight:800; color:#26c1a8; text-decoration:none; font-size:1.2rem;
+  padding:8px 12px; border-radius:10px;
+}
+.nav-links{ display:flex; gap:12px; align-items:center; margin-left:8px; flex-wrap:wrap }
 .nav-links a{
-    margin-left:22px;color:#41403e;text-decoration:none;font-weight:600;font-size:.95rem;
-    transition:.2s
+  color:#214a44; text-decoration:none; padding:8px 12px;
+  border-radius:10px; transition:background .2s;
 }
-.nav-links a:hover{color:#ff8552}
+.nav-links a:hover{ background:#eaf8f5 }
+.nav-right{ margin-left:auto; display:flex; align-items:center; gap:10px }
+
+/* Bell button */
+.bell{
+  position:relative; display:inline-flex; align-items:center; justify-content:center;
+  width:40px; height:40px; border-radius:10px; border:1px solid #e9e7e6; background:#fff;
+  cursor:pointer; text-decoration:none;
+}
+.bell:hover{ background:#f6fbfa }
+.bell svg{ width:20px; height:20px; fill:#214a44 }
+.bell-dot{
+  position:absolute; top:6px; right:6px;
+  width:10px; height:10px; border-radius:50%;
+  background:#ff4d4f; box-shadow:0 0 0 2px #fff;
+}
+.btn{
+  background:#26c1a8; color:#fff; text-decoration:none; padding:8px 14px;
+  border-radius:10px; font-weight:700;
+}
+.btn:hover{ background:#1ea893 }
+.avatar{
+  display:inline-flex; width:36px; height:36px; border-radius:50%;
+  background:#eaf8f5; border:2px solid #d6f2ea; color:#26c1a8;
+  align-items:center; justify-content:center; font-weight:800;
+}
 </style>
 
-<?php
-  $isAdmin   = ($_SESSION['role'] ?? '') === 'admin';
-  $logged    = isset($_SESSION['user_id']);
-  $cartCount = array_sum($_SESSION['cart'] ?? []);
-?>
+<nav class="navbar">
+  <!-- Brand takes user to Welcome page -->
+  <a class="nav-brand" href="<?=BASE_URL?>/User/welcome">PawCare</a>
 
-<div class="nav-bar">
-   <!-- Brand → Welcome page -->
-   <a class="nav-brand" href="<?=BASE_URL?>/User/welcome">🐾 PawCare</a>
+  <div class="nav-links">
+    <?php if (!$hideShopPetsDonateForAdmin): ?>
+      <a href="<?=BASE_URL?>/Pet/index">Pets</a>
+      <a href="<?=BASE_URL?>/Shop/index">Shop</a>
+      <a href="<?=BASE_URL?>/Donation/index">Donate</a>
+    <?php endif; ?>
+    <a href="<?=BASE_URL?>/Appointment/index">Appointments</a>
 
-   <div class="nav-links">
-        <!-- User links (hidden for admins) -->
-        <?php if(!$isAdmin): ?>
-            <a href="<?=BASE_URL?>/Shop/index">Shop</a>
-            <a href="<?=BASE_URL?>/Pet/index">Pets</a>
-            <a href="<?=BASE_URL?>/Donation/index">Donate</a>
-            
-            <?php if($logged): ?><a href="<?=BASE_URL?>/User/profile">Profile</a><?php endif; ?>
-        <?php endif; ?>
+    <?php if (!$hideShopPetsDonateForAdmin): ?>
+      <?php if ($isAuth): ?>
+        <!-- NEW: My Orders (user only) -->
+        <a href="<?=BASE_URL?>/Order/index">My Orders</a>
+      <?php endif; ?>
+      <!-- NEW: Cart with count (user-facing navbar) -->
+      <a href="<?=BASE_URL?>/Cart/index">Cart (<?=$cartCount?>)</a>
+    <?php endif; ?>
 
-        <?php if($logged && !$isAdmin): ?>
-            <a href="<?=BASE_URL?>/Order/index">My Orders</a>
-        <?php endif; ?>
+    <?php if ($role === 'admin'): ?>
+      <!-- Admin menu (keeps your existing admin pages) -->
+      <a href="<?=BASE_URL?>/Admin/index">Admin Products</a>
+      <a href="<?=BASE_URL?>/AdminPet/index">Admin Pets</a>
+      <a href="<?=BASE_URL?>/AdminAdoption/index">AdoptionInfo</a>
+      <a href="<?=BASE_URL?>/AdminDonation/index">Admin Donations</a>
+      <a href="<?=BASE_URL?>/AdminOrder/index">Admin Orders</a>
+    <?php endif; ?>
+  </div>
 
-        <!-- Admin-only links -->
-        <?php if($isAdmin): ?>
-            <a href="<?=BASE_URL?>/Admin/index">Products</a>
-            <a href="<?=BASE_URL?>/AdminPet/index">PetInfo</a>
-            <a href="<?=BASE_URL?>/AdminOrder/index">Orders</a>
-            <a href="<?=BASE_URL?>/AdminDonation/index">Donations</a>
-            <a href="<?=BASE_URL?>/AdminAdoption/index">AdoptionInfo</a>
-            <a href="<?=BASE_URL?>/AdminRehome/index">ReHome Requests</a>
-        <?php endif; ?>
+  <div class="nav-right">
+    <!-- Vaccination notification bell -->
+    <a class="bell" href="<?=BASE_URL?>/Vaccination/index"
+       title="<?= $hasTodayVaccination ? 'Vaccinations due today!' : 'Vaccination reminders' ?>"
+       aria-label="<?= $hasTodayVaccination ? 'Vaccinations due today!' : 'Vaccination reminders' ?>">
+      <!-- simple bell icon (SVG) to match theme -->
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 22a2.2 2.2 0 0 0 2.2-2.2H9.8A2.2 2.2 0 0 0 12 22Zm8-6v-5.5A6 6 0 0 0 13 4.1V3a1 1 0 1 0-2 0v1.1A6 6 0 0 0 4 10.5V16l-1.7 1.7A1 1 0 0 0 3 19h18a1 1 0 0 0 .7-1.7L20 16Z"/>
+      </svg>
+      <?php if ($hasTodayVaccination): ?>
+        <span class="bell-dot" aria-hidden="true"></span>
+      <?php endif; ?>
+    </a>
 
-        <?php if(!$isAdmin): ?>
-            <a href="<?=BASE_URL?>/Cart/index">Cart (<?=$cartCount?>)</a>
-        <?php endif; ?>
-
-        <?php if($logged): ?>
-            <a href="<?=BASE_URL?>/User/logout">Logout</a>
-        <?php else: ?>
-            <a href="<?=BASE_URL?>/User/login">Login</a>
-        <?php endif; ?>
-   </div>
-</div>
+    <?php if ($isAuth): ?>
+      <a class="avatar" href="<?=BASE_URL?>/User/profile"><?=strtoupper(substr($user ?? 'U',0,1))?></a>
+      <a class="btn" href="<?=BASE_URL?>/User/logout">Logout</a>
+    <?php else: ?>
+      <a href="<?=BASE_URL?>/User/login">Login</a>
+      <a class="btn" href="<?=BASE_URL?>/User/register">Sign up</a>
+    <?php endif; ?>
+  </div>
+</nav>
 
 
 ===== FILE: app\views\pet\detail.php =====
@@ -2632,108 +3438,204 @@ a.btn:hover{background:#1ea893}
 
 ===== FILE: app\views\shop\detail.php =====
 <!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><title><?=htmlspecialchars($prod['name'])?> • PawCare</title>
+<meta charset="UTF-8"><title>Product • PawCare</title>
 <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
 <style>
+:root{
+  --brand:#26c1a8; --brand2:#1ea893;
+  --ink:#163c35; --muted:#6f7b78; --bg:#f0faf6; --line:#e9e7e6;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
-.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);display:flex;overflow:hidden;max-width:920px;margin:auto}
-.card img{width:50%;object-fit:cover}
-.info{padding:36px 40px;width:50%;display:flex;flex-direction:column}
-h2{font-size:1.8rem;font-weight:600;color:#41403e;margin-bottom:.8rem}
-.price{color:#ff8552;font-size:1.2rem;font-weight:700;margin-bottom:1rem}
-.desc{color:#555;font-size:.95rem;line-height:1.4;flex:1}
-form{margin-top:18px}
-input[type=number]{width:70px;padding:.5rem;border:2px solid #e9e7e6;border-radius:8px;font-size:.95rem;margin-right:12px}
-button{background:#26c1a8;color:#fff;border:none;padding:.65rem 22px;font-weight:600;border-radius:10px;cursor:pointer;transition:.3s}
-button:hover{background:#1ea893}
-@media(max-width:760px){.card{flex-direction:column}.card img,.info{width:100%}}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);color:var(--ink);padding:40px 6%}
+
+.wrap{max-width:1100px;margin:92px auto 24px;display:grid;grid-template-columns:1fr 1fr;gap:28px}
+@media(max-width:980px){.wrap{grid-template-columns:1fr}}
+
+.gallery{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+.gallery .pic{width:100%;height:420px;background:#f6f8f8}
+.gallery img{width:100%;height:100%;object-fit:cover;display:block}
+
+.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+h1{font-size:1.8rem;margin-bottom:6px}
+.meta{color:var(--muted);margin-bottom:10px}
+.price{font-size:1.6rem;font-weight:800;color:#1b3f39;margin:8px 0 12px}
+.desc{color:#475a56;line-height:1.55;white-space:pre-wrap}
+
+.actions{display:flex;gap:10px;margin-top:16px}
+.qty{display:flex;gap:8px;align-items:center;border:2px solid var(--line);border-radius:12px;padding:6px 10px}
+.qty input{width:64px;border:none;outline:none;font-weight:700}
+.btn{flex:1;text-align:center;text-decoration:none;padding:.9rem 1rem;border-radius:12px;font-weight:700}
+.btn-primary{background:var(--brand);color:#fff}
+.btn-primary:hover{background:var(--brand2)}
+.btn-ghost{border:2px solid var(--brand);color:var(--brand);background:#fff}
+.btn-ghost:hover{background:#eaf8f5}
 </style></head><body>
-<?php include_once __DIR__.'/../partials/nav.php'; ?>
+<?php include_once 'app/views/partials/nav.php'; ?>
 
-<div class="card" style="margin-top:90px">
-    <img src="<?=htmlspecialchars($prod['image'])?>" alt="">
-    <div class="info">
-        <h2><?=htmlspecialchars($prod['name'])?></h2>
-        <div class="price">$<?=number_format($prod['price'],2)?></div>
-        <div class="desc"><?=htmlspecialchars($prod['description'])?></div>
+<?php $p = $data['prod']; ?>
 
-        <form method="POST" action="<?=BASE_URL?>/Cart/add?id=<?=$prod['id']?>">
-            <input type="number" name="qty" value="1" min="1">
-            <button type="submit">Add to Cart</button>
-        </form>
+<div class="wrap">
+  <div class="gallery">
+    <div class="pic">
+      <img src="<?=htmlspecialchars($p['image'])?>" alt=""
+           onerror="this.src='<?=BASE_URL?>/public/assets/images/product-placeholder.jpg'">
     </div>
+  </div>
+
+  <div class="panel">
+    <h1><?=htmlspecialchars($p['name'])?></h1>
+    <div class="meta"><?=htmlspecialchars($p['category'])?></div>
+    <div class="price">$<?=number_format($p['price'],2)?></div>
+    <div class="desc"><?=htmlspecialchars($p['description'])?></div>
+
+    <div class="actions">
+      <a class="btn btn-ghost" href="<?=BASE_URL?>/Shop/index">Back to shop</a>
+      <form method="post" action="<?=BASE_URL?>/Cart/add?id=<?=$p['id']?>" style="flex:1;display:flex;gap:10px">
+        <div class="qty">
+          <label for="qty" style="font-weight:700;color:#1b3f39">Qty</label>
+          <input id="qty" name="qty" type="number" value="1" min="1">
+        </div>
+        <button class="btn btn-primary" type="submit">Add to cart</button>
+      </form>
+    </div>
+  </div>
 </div>
 </body></html>
 
 
 ===== FILE: app\views\shop\index.php =====
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>PawCare • Pet Shop</title>
-
-    <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
-
-    <style>
-        *{box-sizing:border-box;margin:0;padding:0}
-        body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
-        h1{font-size:2.1rem;font-weight:600;color:#41403e;text-align:center;margin:1.6rem 0}
-
-        .filters{text-align:center;margin-bottom:2rem}
-        .filters a{color:#26c1a8;text-decoration:none;font-weight:600;margin:0 .6rem;font-size:.95rem;transition:.2s}
-        .filters a:hover{color:#1b907d}
-        .filters .active{color:#ff8552}
-
-        .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:24px}
-        .card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);display:flex;flex-direction:column;overflow:hidden;transition:.25s}
-        .card:hover{transform:translateY(-6px)}
-        .card img{width:100%;height:150px;object-fit:cover}
-        .category-tag{position:absolute;top:12px;left:12px;background:#26c1a8;color:#fff;font-size:.75rem;font-weight:600;padding:4px 8px;border-radius:12px}
-        .card-wrap{position:relative}
-        .card-body{padding:18px 20px}
-        .name{font-weight:600;color:#41403e;font-size:1.05rem;margin-bottom:.4rem}
-        .price{color:#ff8552;font-weight:700;font-size:1rem}
-        a.card-link{text-decoration:none}
-    </style>
-</head>
-<body>
-<?php include_once __DIR__.'/../partials/nav.php'; ?> <!-- fixed path -->
-
-<h1>🐾 PawCare Shop</h1>
-
-<div class="filters">
-<?php
-$cats=['All','Food','Medicine','Toy','Accessories'];
-foreach($cats as $c){
-    $act=($data['cat']===$c || ($c==='All' && !$data['cat']));
-    $url=$c==='All'?BASE_URL.'/Shop/index':BASE_URL.'/Shop/index?cat='.$c;
-    echo '<a href="'.$url.'" class="'.($act?'active':'').'">'.$c.'</a>';
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>PawCare • Shop</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --brand:#26c1a8; --brand2:#1ea893;
+  --ink:#163c35; --muted:#6f7b78;
+  --bg:#f0faf6; --card:#ffffff; --line:#e9e7e6;
 }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);color:var(--ink);padding:40px 6%}
+
+/* hero */
+.hero{max-width:1180px;margin:92px auto 22px;display:grid;grid-template-columns:1.15fr .85fr;gap:22px;align-items:center}
+@media(max-width:980px){.hero{grid-template-columns:1fr}}
+h1{font-size:2.2rem;line-height:1.2;margin-bottom:6px}
+.lead{color:var(--muted)}
+.hero-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+.hero-pic{height:220px;border-radius:16px;overflow:hidden;background:#eaf8f5;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+.hero-pic img{width:100%;height:100%;object-fit:cover;display:block}
+
+/* toolbar */
+.toolbar{max-width:1180px;margin:6px auto 18px;display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.tab{display:inline-block;padding:8px 12px;border:1px solid #bfece1;background:#e7f8f4;color:#1b907d;border-radius:999px;font-weight:700;text-decoration:none}
+.tab.active{background:var(--brand);border-color:var(--brand);color:#fff}
+.search{margin-left:auto;display:flex;gap:8px}
+.search input{padding:.75rem 1rem;border:2px solid var(--line);border-radius:12px;background:#fff;min-width:240px}
+.search button{padding:.75rem 1rem;border:none;border-radius:12px;background:var(--brand);color:#fff;font-weight:700;cursor:pointer}
+.search button:hover{background:var(--brand2)}
+@media(max-width:720px){.search{width:100%}.search input{flex:1;min-width:0}}
+
+/* grid */
+.grid{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.card{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 10px 20px rgba(0,0,0,.06);transition:transform .18s ease, box-shadow .18s ease}
+.card:hover{transform:translateY(-3px);box-shadow:0 14px 24px rgba(0,0,0,.09)}
+.thumb{width:100%;height:170px;background:#f6f8f8;position:relative}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.badge{position:absolute;left:10px;top:10px;background:#fff;border:1px solid var(--line);padding:4px 8px;border-radius:999px;font-weight:700;font-size:.78rem;color:#1b3f39}
+.b{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.name{font-weight:700}
+.cat{font-size:.85rem;color:#60706d}
+.price-row{display:flex;align-items:center;justify-content:space-between}
+.price{font-size:1.05rem;font-weight:800;color:#1b3f39}
+.actions{margin-top:6px;display:flex;gap:10px}
+.btn{flex:1;text-align:center;text-decoration:none;padding:.7rem;border-radius:12px;font-weight:700}
+.btn-primary{background:var(--brand);color:#fff}
+.btn-primary:hover{background:var(--brand2)}
+.btn-ghost{border:2px solid var(--brand);color:var(--brand);background:#fff}
+.btn-ghost:hover{background:#eaf8f5}
+
+/* empty */
+.empty{max-width:880px;margin:20px auto;background:#fff;border:1px dashed var(--line);border-radius:14px;padding:16px;text-align:center;color:#60706d}
+</style>
+</head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<section class="hero">
+  <div class="hero-card">
+    <h1>Pet Shop</h1>
+    <p class="lead">Healthy food, playful toys, comfy accessories—everything your buddy loves, in one place.</p>
+  </div>
+  <figure class="hero-pic">
+    <img src="https://t3.ftcdn.net/jpg/07/37/09/80/360_F_737098069_mZes7O8RZ0wjsZW53caEPTs9Dtb4hdKk.jpg"
+         alt="" onerror="this.src='<?=BASE_URL?>/public/assets/images/shop-hero.jpg'">
+  </figure>
+</section>
+
+<?php
+  // Category tabs use existing ShopController index?cat=...
+  $active = $data['cat'] ?? null;
+  $mk = function($label,$cat) use($active){
+    $is = ($active===$cat || ($cat===null && $active===null));
+    $href = $cat ? BASE_URL.'/Shop/index?cat='.urlencode($cat) : BASE_URL.'/Shop/index';
+    return '<a class="tab'.($is?' active':'').'" href="'.$href.'">'.($label).'</a>';
+  };
 ?>
+<div class="toolbar">
+  <?=$mk('All', null)?>
+  <?=$mk('Food', 'Food')?>
+  <?=$mk('Medicine', 'Medicine')?>
+  <?=$mk('Toy', 'Toy')?>
+  <?=$mk('Accessories', 'Accessories')?>
+
+  <!-- quick client-side filter by name -->
+  <form class="search" onsubmit="event.preventDefault()">
+    <input id="q" type="text" placeholder="Search product name...">
+    <button onclick="filterCards()">Search</button>
+  </form>
 </div>
 
-<div class="grid">
+<?php if(empty($data['products'])): ?>
+  <div class="empty">No products found in this category.</div>
+<?php endif; ?>
+
+<section id="grid" class="grid">
 <?php foreach($data['products'] as $p): ?>
- <a class="card-link" href="<?=BASE_URL?>/Shop/detail?id=<?=$p['id']?>">
-
-
-   <div class="card">
-      <div class="card-wrap">
-         <span class="category-tag"><?=$p['category']?></span>
-         <img src="<?=htmlspecialchars($p['image'])?>" alt="<?=htmlspecialchars($p['name'])?>">
+  <article class="card" data-name="<?=htmlspecialchars(strtolower($p['name']))?>">
+    <div class="thumb">
+      <img src="<?=htmlspecialchars($p['image'])?>" alt=""
+           onerror="this.src='<?=BASE_URL?>/public/assets/images/product-placeholder.jpg'">
+      <span class="badge"><?=htmlspecialchars($p['category'])?></span>
+    </div>
+    <div class="b">
+      <div class="name"><?=htmlspecialchars($p['name'])?></div>
+      <div class="price-row">
+        <div class="cat">for happy pets</div>
+        <div class="price">$<?=number_format($p['price'],2)?></div>
       </div>
-      <div class="card-body">
-         <div class="name"><?=htmlspecialchars($p['name'])?></div>
-         <div class="price">$<?=number_format($p['price'],2)?></div>
+
+      <div class="actions">
+        <a class="btn btn-ghost" href="<?=BASE_URL?>/Shop/detail?id=<?=$p['id']?>">Details</a>
+        <form method="post" action="<?=BASE_URL?>/Cart/add?id=<?=$p['id']?>" style="flex:1">
+          <input type="hidden" name="qty" value="1">
+          <button class="btn btn-primary" type="submit">Add to cart</button>
+        </form>
       </div>
-   </div>
- </a>
+    </div>
+  </article>
 <?php endforeach; ?>
-</div>
-</body>
-</html>
+</section>
+
+<script>
+function filterCards(){
+  const q = (document.getElementById('q').value || '').trim().toLowerCase();
+  const items = document.querySelectorAll('#grid .card');
+  items.forEach(el=>{
+    const n = el.getAttribute('data-name');
+    el.style.display = (!q || (n && n.indexOf(q)>-1)) ? '' : 'none';
+  });
+}
+</script>
+</body></html>
 
 
 ===== FILE: app\views\user\edit.php =====
@@ -2882,63 +3784,101 @@ a.btn:hover{background:#e7f8f4}
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
-.card{
-  background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);
-  max-width:820px;margin:100px auto 24px;padding:26px
-}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);max-width:880px;margin:100px auto 24px;padding:26px}
 h2{color:#41403e;font-size:1.6rem;font-weight:600;margin-bottom:8px}
 .small{color:#777;font-size:.88rem}
-.avatar{
-  width:88px;height:88px;border-radius:50%;background:#eaf8f5;border:2px solid #d6f2ea;
-  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.6rem;color:#26c1a8;margin-bottom:10px
-}
-.field{
-  background:#fafafa;border:1px solid #e9e7e6;border-radius:12px;padding:10px 12px;margin-top:12px
-}
+.avatar{width:88px;height:88px;border-radius:50%;background:#eaf8f5;border:2px solid #d6f2ea;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.6rem;color:#26c1a8;margin-bottom:10px}
+.field{background:#fafafa;border:1px solid #e9e7e6;border-radius:12px;padding:10px 12px;margin-top:12px}
 .label{font-weight:700;color:#41403e;font-size:.9rem}
 .value{color:#555;margin-top:4px;white-space:pre-wrap}
 .bio{white-space:pre-wrap;line-height:1.45;color:#555}
-button.primary{
-  margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;
-  padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s
-}
+button.primary{margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s}
 button.primary:hover{background:#1ea893}
 a.link{display:block;text-align:center;margin-top:10px;color:#26c1a8;text-decoration:none;font-weight:700}
 a.link:hover{text-decoration:underline}
+.section-title{margin-top:18px;font-weight:700;color:#41403e}
+.appt-box,.vax-box{margin-top:8px;background:#fff;border:1px solid #e9e7e6;border-radius:12px}
+.row{display:flex;gap:12px;align-items:center;padding:12px;border-top:1px solid #f1efee}
+.row:first-child{border-top:none}
+.when{min-width:160px;color:#1b3f39;font-weight:700}
+.who{color:#445b58}
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem;margin-left:8px}
+.booked{background:#e7f8f4;border:1px solid #bfece1;color:#1b907d}
+.completed{background:#e8eafc;border:1px solid #c7cbff;color:#343a8b}
+.cancelled{background:#ffe6e6;border:1px solid #ffb2b2;color:#9c2a2a}
+.soon{background:#fff3d6;border:1px solid #f5d48a;color:#9b6b00}
+.empty{padding:14px;color:#60706d}
+.actions-row{display:flex;gap:10px;margin-top:10px}
+.btn-outline{display:inline-block;padding:.7rem 1rem;border:2px solid #26c1a8;color:#26c1a8;border-radius:12px;font-weight:700;text-decoration:none;text-align:center;flex:1}
+.btn-outline:hover{background:#eaf8f5}
+.btn-cancel{margin-left:auto;background:#fff;border:2px solid #ff6b6b;color:#ff6b6b;padding:.55rem .8rem;border-radius:10px;font-weight:700;cursor:pointer}
+.btn-cancel:hover{background:#ffefef}
 </style></head><body>
 <?php include_once 'app/views/partials/nav.php'; ?>
+
+<?php
+  // $u comes from UserController::profile
+  // Load upcoming appointments and vaccination reminders (next 30 days)
+  $apptUpcoming = $this->model('Appointment')->upcomingByUser($u['id'] ?? $_SESSION['user_id'] ?? 0, 6);
+  $vaxSoon      = $this->model('Vaccination')->upcomingDue($u['id'] ?? $_SESSION['user_id'] ?? 0, 30, 5);
+?>
 
 <div class="card">
   <div class="avatar"><?=strtoupper(substr(($u['username'] ?? 'U'),0,1))?></div>
   <h2>Hello, <?=htmlspecialchars($u['username'])?> 👋</h2>
-  <div class="small">Keep your info up to date so we can contact you about orders, adoptions, or rehoming.</div>
+  <div class="small">Keep your info up to date so we can contact you about orders, adoptions, rehoming, or vet appointments.</div>
 
-  <div class="field">
-    <div class="label">Email</div>
-    <div class="value"><?=htmlspecialchars($u['email'] ?: '—')?></div>
-  </div>
-
-  <div class="field">
-    <div class="label">Phone</div>
-    <div class="value"><?=htmlspecialchars($u['phone'] ?: '—')?></div>
-  </div>
-
-  <div class="field">
-    <div class="label">Address</div>
-    <div class="value"><?=htmlspecialchars($u['address'] ?: '—')?></div>
-  </div>
+  <div class="field"><div class="label">Email</div><div class="value"><?=htmlspecialchars($u['email'] ?: '—')?></div></div>
+  <div class="field"><div class="label">Phone</div><div class="value"><?=htmlspecialchars($u['phone'] ?: '—')?></div></div>
+  <div class="field"><div class="label">Address</div><div class="value"><?=htmlspecialchars($u['address'] ?: '—')?></div></div>
 
   <div style="margin-top:14px">
     <div class="label" style="margin-bottom:6px">Bio</div>
     <div class="bio"><?=htmlspecialchars($u['bio'] ?: "Tell us about you! (e.g., favorite breed, pet experience)")?></div>
   </div>
 
-  <!-- Single bottom button to edit -->
-  <form action="<?=BASE_URL?>/User/edit" method="get">
-    <button class="primary" type="submit">Edit Profile</button>
-  </form>
+  <!-- Vaccination reminders -->
+  <div class="section-title">Vaccination reminders (next 30 days)</div>
+  <div class="vax-box">
+    <?php if(empty($vaxSoon)): ?>
+      <div class="empty">No upcoming vaccinations. <a class="btn-outline" style="display:inline-block;margin-left:8px" href="<?=BASE_URL?>/Vaccination/index">Add one</a></div>
+    <?php else: foreach($vaxSoon as $v): ?>
+      <div class="row">
+        <div class="when">📅 <?=date('M d, Y', strtotime($v['due_date']))?></div>
+        <div class="who"><strong><?=htmlspecialchars($v['pet_name'])?></strong> – <?=htmlspecialchars($v['vaccine'])?> <?=($v['dose']?'('.htmlspecialchars($v['dose']).')':'')?></div>
+        <span class="badge soon">Soon</span>
+      </div>
+    <?php endforeach; endif; ?>
+  </div>
 
-  <!-- Optional small link to ReHome (not a second panel or big button) -->
+  <!-- Upcoming Appointments (existing) -->
+  <div class="section-title">Upcoming appointments</div>
+  <div class="appt-box">
+    <?php if (!empty($apptUpcoming)): ?>
+      <?php foreach ($apptUpcoming as $r): ?>
+        <?php $d = date('M d, Y', strtotime($r['appt_date'])); $t = date('g:i A', strtotime($r['slot'])); ?>
+        <div class="row">
+          <div class="when">🗓️ <?=$d?> • <?=$t?></div>
+          <div class="who">with <strong><?=htmlspecialchars($r['vet_name'])?></strong> (<?=htmlspecialchars($r['vet_city'])?>) — for <strong><?=htmlspecialchars($r['pet_name'])?></strong></div>
+          <span class="badge booked" style="margin-left:10px">Booked</span>
+          <form method="post" action="<?=BASE_URL?>/Appointment/cancel" style="margin-left:auto">
+            <input type="hidden" name="id" value="<?=$r['id']?>">
+            <button class="btn-cancel" type="submit" onclick="return confirm('Cancel this appointment?')">Cancel</button>
+          </form>
+        </div>
+      <?php endforeach; ?>
+    <?php else: ?>
+      <div class="empty">No upcoming appointments. Book one now to see it here.</div>
+    <?php endif; ?>
+  </div>
+
+  <!-- Actions -->
+  <div class="actions-row">
+    <a class="btn-outline" href="<?=BASE_URL?>/Appointment/index">Book a Vet</a>
+    <a class="btn-outline" href="<?=BASE_URL?>/Vaccination/index">Manage Vaccinations</a>
+  </div>
+
+  <form action="<?=BASE_URL?>/User/edit" method="get"><button class="primary" type="submit">Edit Profile</button></form>
   <a class="link" href="<?=BASE_URL?>/Rehome/request">ReHome a pet?</a>
 </div>
 </body></html>
@@ -3121,6 +4061,136 @@ Adopt. Shop. Love.
   </section>
 </body>
 </html>
+
+
+===== FILE: app\views\vaccination\index.php =====
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="UTF-8"><title>Vaccination Reminders • PawCare</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px}
+.container{max-width:1050px;margin:90px auto 30px}
+h1{font-size:2rem;font-weight:600;color:#41403e;text-align:center;margin-bottom:8px}
+.sub{color:#6f7b78;text-align:center;margin-bottom:22px;font-size:.95rem}
+
+.grid{display:grid;grid-template-columns:1fr;gap:18px}
+.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);padding:20px}
+
+label{display:block;font-weight:700;color:#41403e;margin:10px 0 6px;font-size:.95rem}
+input,textarea{width:100%;padding:.75rem 1rem;border:2px solid #e9e7e6;border-radius:10px}
+input:focus,textarea:focus{border-color:#26c1a8;outline:none}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+button{margin-top:14px;background:#26c1a8;color:#fff;border:none;padding:.9rem 1.2rem;font-weight:700;border-radius:10px;cursor:pointer}
+button:hover{background:#1ea893}
+
+.table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{padding:12px 14px;text-align:left;font-size:.93rem}
+th{background:#26c1a8;color:#fff}
+tr:nth-child(even){background:#fafafa}
+
+.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem}
+.scheduled{background:#e7f8f4;border:1px solid #bfece1;color:#1b907d}
+.done{background:#e8eafc;border:1px solid #c7cbff;color:#343a8b}
+.missed{background:#ffe6e6;border:1px solid #ffb2b2;color:#9c2a2a}
+.soon{background:#fff3d6;border:1px solid #f5d48a;color:#9b6b00}
+
+.act a{display:inline-block;margin-right:8px;text-decoration:none;font-weight:700}
+a.green{color:#26c1a8}a.green:hover{text-decoration:underline}
+a.red{color:#ff6b6b}a.red:hover{text-decoration:underline}
+</style></head><body>
+<?php include_once 'app/views/partials/nav.php'; ?>
+
+<div class="container">
+  <h1>Vaccination Reminders</h1>
+  <div class="sub">Add your pet’s vaccinations and we’ll keep them visible on your profile when due soon.</div>
+
+  <div class="grid">
+    <div class="card">
+      <form method="POST" action="<?=BASE_URL?>/Vaccination/index">
+        <div class="row">
+          <div>
+            <label>Pet Name *</label>
+            <input type="text" name="pet_name" required>
+          </div>
+          <div>
+            <label>Vaccine *</label>
+            <input type="text" name="vaccine" placeholder="e.g., Rabies, DHPP" required>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label>Dose / Shot #</label>
+            <input type="text" name="dose" placeholder="e.g., Booster #2">
+          </div>
+          <div>
+            <label>Due Date *</label>
+            <input type="date" name="due_date" required>
+          </div>
+        </div>
+
+        <label>Notes</label>
+        <textarea name="notes" rows="3" placeholder="Any details your vet gave you"></textarea>
+
+        <button type="submit">Save Vaccination</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <?php if(empty($list)): ?>
+        <div style="color:#60706d">No vaccinations yet. Add your first reminder on the left.</div>
+      <?php else: ?>
+      <table class="table">
+        <thead>
+          <tr>
+            <th style="width:160px">Due</th>
+            <th>Pet</th>
+            <th>Vaccine</th>
+            <th style="width:110px">Status</th>
+            <th style="width:22%">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        <?php
+          $today = new DateTime('today');
+          foreach($list as $r):
+              $due = new DateTime($r['due_date']);
+              $status = $r['status'];
+
+              // mark missed (visual only) if still scheduled but date passed
+              $badge = $status;
+              if ($status==='scheduled' && $due < $today) $badge = 'missed';
+
+              // within next 7 days = soon
+              $soon = ($status!=='done' && $due >= $today && $due <= (new DateTime('+7 days')));
+        ?>
+          <tr>
+            <td><?=date('M d, Y', strtotime($r['due_date']))?></td>
+            <td><?=htmlspecialchars($r['pet_name'])?></td>
+            <td>
+              <?=htmlspecialchars($r['vaccine'])?>
+              <?php if($r['dose']): ?> (<?=htmlspecialchars($r['dose'])?>)<?php endif; ?>
+              <?php if($soon): ?> <span class="badge soon">Soon</span><?php endif; ?>
+            </td>
+            <td><span class="badge <?=$badge?>"><?=ucfirst($badge)?></span></td>
+            <td class="act">
+              <?php if($r['status']!=='done'): ?>
+                <a class="green" href="<?=BASE_URL?>/Vaccination/done?id=<?=$r['id']?>">Mark Done</a>
+              <?php else: ?>
+                <a class="green" href="<?=BASE_URL?>/Vaccination/schedule?id=<?=$r['id']?>">Re-schedule</a>
+              <?php endif; ?>
+              <a class="red" href="<?=BASE_URL?>/Vaccination/delete?id=<?=$r['id']?>" onclick="return confirm('Delete this record?')">Delete</a>
+            </td>
+          </tr>
+        <?php endforeach; ?>
+        </tbody>
+      </table>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+</body></html>
 
 
 ===== FILE: core\Controller.php =====

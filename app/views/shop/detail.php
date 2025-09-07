@@ -1,34 +1,64 @@
 <!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><title><?=htmlspecialchars($prod['name'])?> • PawCare</title>
+<meta charset="UTF-8"><title>Product • PawCare</title>
 <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
 <style>
+:root{
+  --brand:#26c1a8; --brand2:#1ea893;
+  --ink:#163c35; --muted:#6f7b78; --bg:#f0faf6; --line:#e9e7e6;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
-.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);display:flex;overflow:hidden;max-width:920px;margin:auto}
-.card img{width:50%;object-fit:cover}
-.info{padding:36px 40px;width:50%;display:flex;flex-direction:column}
-h2{font-size:1.8rem;font-weight:600;color:#41403e;margin-bottom:.8rem}
-.price{color:#ff8552;font-size:1.2rem;font-weight:700;margin-bottom:1rem}
-.desc{color:#555;font-size:.95rem;line-height:1.4;flex:1}
-form{margin-top:18px}
-input[type=number]{width:70px;padding:.5rem;border:2px solid #e9e7e6;border-radius:8px;font-size:.95rem;margin-right:12px}
-button{background:#26c1a8;color:#fff;border:none;padding:.65rem 22px;font-weight:600;border-radius:10px;cursor:pointer;transition:.3s}
-button:hover{background:#1ea893}
-@media(max-width:760px){.card{flex-direction:column}.card img,.info{width:100%}}
+body{font-family:'Quicksand',sans-serif;background:var(--bg);color:var(--ink);padding:40px 6%}
+
+.wrap{max-width:1100px;margin:92px auto 24px;display:grid;grid-template-columns:1fr 1fr;gap:28px}
+@media(max-width:980px){.wrap{grid-template-columns:1fr}}
+
+.gallery{background:#fff;border:1px solid var(--line);border-radius:16px;overflow:hidden;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+.gallery .pic{width:100%;height:420px;background:#f6f8f8}
+.gallery img{width:100%;height:100%;object-fit:cover;display:block}
+
+.panel{background:#fff;border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:0 10px 20px rgba(0,0,0,.06)}
+h1{font-size:1.8rem;margin-bottom:6px}
+.meta{color:var(--muted);margin-bottom:10px}
+.price{font-size:1.6rem;font-weight:800;color:#1b3f39;margin:8px 0 12px}
+.desc{color:#475a56;line-height:1.55;white-space:pre-wrap}
+
+.actions{display:flex;gap:10px;margin-top:16px}
+.qty{display:flex;gap:8px;align-items:center;border:2px solid var(--line);border-radius:12px;padding:6px 10px}
+.qty input{width:64px;border:none;outline:none;font-weight:700}
+.btn{flex:1;text-align:center;text-decoration:none;padding:.9rem 1rem;border-radius:12px;font-weight:700}
+.btn-primary{background:var(--brand);color:#fff}
+.btn-primary:hover{background:var(--brand2)}
+.btn-ghost{border:2px solid var(--brand);color:var(--brand);background:#fff}
+.btn-ghost:hover{background:#eaf8f5}
 </style></head><body>
-<?php include_once __DIR__.'/../partials/nav.php'; ?>
+<?php include_once 'app/views/partials/nav.php'; ?>
 
-<div class="card" style="margin-top:90px">
-    <img src="<?=htmlspecialchars($prod['image'])?>" alt="">
-    <div class="info">
-        <h2><?=htmlspecialchars($prod['name'])?></h2>
-        <div class="price">$<?=number_format($prod['price'],2)?></div>
-        <div class="desc"><?=htmlspecialchars($prod['description'])?></div>
+<?php $p = $data['prod']; ?>
 
-        <form method="POST" action="<?=BASE_URL?>/Cart/add?id=<?=$prod['id']?>">
-            <input type="number" name="qty" value="1" min="1">
-            <button type="submit">Add to Cart</button>
-        </form>
+<div class="wrap">
+  <div class="gallery">
+    <div class="pic">
+      <img src="<?=htmlspecialchars($p['image'])?>" alt=""
+           onerror="this.src='<?=BASE_URL?>/public/assets/images/product-placeholder.jpg'">
     </div>
+  </div>
+
+  <div class="panel">
+    <h1><?=htmlspecialchars($p['name'])?></h1>
+    <div class="meta"><?=htmlspecialchars($p['category'])?></div>
+    <div class="price">$<?=number_format($p['price'],2)?></div>
+    <div class="desc"><?=htmlspecialchars($p['description'])?></div>
+
+    <div class="actions">
+      <a class="btn btn-ghost" href="<?=BASE_URL?>/Shop/index">Back to shop</a>
+      <form method="post" action="<?=BASE_URL?>/Cart/add?id=<?=$p['id']?>" style="flex:1;display:flex;gap:10px">
+        <div class="qty">
+          <label for="qty" style="font-weight:700;color:#1b3f39">Qty</label>
+          <input id="qty" name="qty" type="number" value="1" min="1">
+        </div>
+        <button class="btn btn-primary" type="submit">Add to cart</button>
+      </form>
+    </div>
+  </div>
 </div>
 </body></html>

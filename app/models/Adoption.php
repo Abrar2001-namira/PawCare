@@ -59,4 +59,22 @@ class Adoption extends Database
         );
         $q->execute([$petId, $acceptedId]);
     }
+
+    /* NEW: list accepted adoptions for a specific user (with pet info + image) */
+    public function byUserAccepted($userId)
+    {
+        $q = $this->pdo->prepare(
+            "SELECT a.*, 
+                    p.id   AS pet_id,
+                    p.name AS pet_name,
+                    p.image AS pet_image
+               FROM adoptions a
+               JOIN pets p ON p.id = a.pet_id
+              WHERE a.user_id = ?
+                AND a.status = 'accepted'
+           ORDER BY a.created DESC"
+        );
+        $q->execute([$userId]);
+        return $q->fetchAll(PDO::FETCH_ASSOC);
+    }
 }

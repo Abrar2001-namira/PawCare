@@ -48,12 +48,19 @@ class UserController extends Controller
         $this->view('user/welcome', ['user'=>$_SESSION['user']]);
     }
 
-    /* READ-ONLY PROFILE (no edit form here) */
+    /* READ-ONLY PROFILE (shows adopted pets too) */
     public function profile()
     {
         if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
         $u = $this->model('User')->findById($_SESSION['user_id']);
-        $this->view('user/profile', ['u'=>$u]);
+
+        // NEW: fetch accepted adoptions (with pet name + image)
+        $adopted = $this->model('Adoption')->byUserAccepted($_SESSION['user_id']);
+
+        $this->view('user/profile', [
+            'u'=>$u,
+            'adopted'=>$adopted
+        ]);
     }
 
     /* EDIT PROFILE (only shown when user clicks “Edit Profile”) */

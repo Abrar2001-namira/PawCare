@@ -475,22 +475,29 @@ class AppointmentController extends Controller
         $this->view('appointment/history', ['list'=>$list]);
     }
 
-    /* NEW: cancel from profile/history */
+    /* Cancel from profile/history — accepts POST (preferred) or GET fallback */
     public function cancel()
     {
         if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header("Location: ".BASE_URL."/User/profile"); exit;
+
+        // Prefer POST, but allow GET?id=... as a safe fallback so the button always works.
+        $id = 0;
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $id = (int)($_POST['id'] ?? 0);
+        } else {
+            $id = (int)($_GET['id'] ?? 0);
         }
 
-        $id = (int)($_POST['id'] ?? 0);
-        if ($id) {
+        if ($id > 0) {
+            // Model verifies ownership (user_id) and only cancels booked ones.
             $this->model('Appointment')->cancel($id, $_SESSION['user_id']);
-            // As soon as status becomes 'cancelled', the slot disappears from takenSlots(),
-            // so it becomes available for everyone immediately.
+            // After status becomes 'cancelled', takenSlots() won’t include it, so the slot is free immediately.
         }
 
-        header("Location: ".BASE_URL."/User/profile"); exit;
+        // Send the user back where they came from, otherwise to profile.
+        $back = $_SERVER['HTTP_REFERER'] ?? (BASE_URL.'/User/profile');
+        header("Location: ".$back);
+        exit;
     }
 }
 
@@ -2819,7 +2826,7 @@ body{font-family:'Quicksand',sans-serif;background:#f0faf6}
 /* hero with soft overlay image (keeps theme colors) */
 .hero{
   position:relative; height:60vh; min-height:360px; margin-top:10px;
-  background:url("https://plus.unsplash.com/premium_photo-1661676172038-377ab3d82a18?q=80&w=1170&auto=format&fit=crop&ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D") center/cover no-repeat;
+  background:url("https://petfriendlyservices.org/wp-content/uploads/Dog-Cat-Blanket-2500x800-1.jpg") center/cover no-repeat;
   display:flex;align-items:center;justify-content:center
 }
 .hero::before{content:'';position:absolute;inset:0;background:rgba(0,0,0,.35)}
@@ -3134,15 +3141,16 @@ if (!empty($_SESSION['cart']) && is_array($_SESSION['cart'])) {
       <a href="<?=BASE_URL?>/Pet/index">Pets</a>
       <a href="<?=BASE_URL?>/Shop/index">Shop</a>
       <a href="<?=BASE_URL?>/Donation/index">Donate</a>
+      <a href="<?=BASE_URL?>/Appointment/index">Find A Vet</a>
     <?php endif; ?>
-    <a href="<?=BASE_URL?>/Appointment/index">Appointments</a>
+    <!-- Renamed label only -->
 
     <?php if (!$hideShopPetsDonateForAdmin): ?>
       <?php if ($isAuth): ?>
-        <!-- NEW: My Orders (user only) -->
+        <!-- My Orders (user only) -->
         <a href="<?=BASE_URL?>/Order/index">My Orders</a>
       <?php endif; ?>
-      <!-- NEW: Cart with count (user-facing navbar) -->
+      <!-- Cart with count (user-facing navbar) -->
       <a href="<?=BASE_URL?>/Cart/index">Cart (<?=$cartCount?>)</a>
     <?php endif; ?>
 
@@ -3153,6 +3161,7 @@ if (!empty($_SESSION['cart']) && is_array($_SESSION['cart'])) {
       <a href="<?=BASE_URL?>/AdminAdoption/index">AdoptionInfo</a>
       <a href="<?=BASE_URL?>/AdminDonation/index">Admin Donations</a>
       <a href="<?=BASE_URL?>/AdminOrder/index">Admin Orders</a>
+      <a href="<?=BASE_URL?>/AdminRehome/index">Admin Rehomes</a>
     <?php endif; ?>
   </div>
 
@@ -3566,7 +3575,7 @@ h1{font-size:2.2rem;line-height:1.2;margin-bottom:6px}
     <p class="lead">Healthy food, playful toys, comfy accessories—everything your buddy loves, in one place.</p>
   </div>
   <figure class="hero-pic">
-    <img src="https://t3.ftcdn.net/jpg/07/37/09/80/360_F_737098069_mZes7O8RZ0wjsZW53caEPTs9Dtb4hdKk.jpg"
+    <img src="https://www.shutterstock.com/image-photo/dog-cat-shopping-cart-on-600nw-2174056805.jpg"
          alt="" onerror="this.src='<?=BASE_URL?>/public/assets/images/shop-hero.jpg'">
   </figure>
 </section>
@@ -3639,56 +3648,102 @@ function filterCards(){
 
 
 ===== FILE: app\views\user\edit.php =====
-<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><title>Edit Profile • PawCare</title>
-<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
-.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);max-width:720px;margin:100px auto;padding:28px}
-h2{color:#41403e;font-size:1.7rem;font-weight:600;margin-bottom:10px;text-align:center}
-label{display:block;font-weight:600;color:#41403e;margin-top:14px}
-input,textarea{width:100%;padding:.8rem 1rem;border:2px solid #e9e7e6;border-radius:12px;margin-top:.45rem;font-size:.95rem;background:#fff}
-textarea{min-height:110px}
-input:focus,textarea:focus{border-color:#26c1a8;outline:none}
-button{margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s}
-button:hover{background:#1ea893}
-.actions{display:flex;gap:10px;margin-top:10px}
-a.btn{flex:1;display:inline-block;text-align:center;text-decoration:none;border:2px solid #26c1a8;color:#26c1a8;padding:10px 16px;border-radius:12px;font-weight:700}
-a.btn:hover{background:#e7f8f4}
-.small{color:#777;font-size:.88rem;margin-top:6px;text-align:center}
-</style></head><body>
-<?php include_once 'app/views/partials/nav.php'; ?>
+<!-- FILE: app/views/user/edit.php -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Edit Profile • PawCare</title>
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
+    .card{
+      background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);
+      max-width:720px;margin:100px auto;padding:28px
+    }
+    h2{color:#41403e;font-size:1.7rem;font-weight:600;margin-bottom:10px;text-align:center}
+    label{display:block;font-weight:600;color:#41403e;margin-top:14px}
+    input,textarea{
+      width:100%;padding:.8rem 1rem;border:2px solid #e9e7e6;border-radius:12px;
+      margin-top:.45rem;font-size:.95rem;background:#fff
+    }
+    textarea{min-height:110px}
+    input:focus,textarea:focus{border-color:#26c1a8;outline:none}
 
-<div class="card">
-  <h2>Edit Profile</h2>
-  <form method="POST" action="<?=BASE_URL?>/User/edit">
-    <label>Name</label>
-    <input type="text" name="username" value="<?=htmlspecialchars($u['username'])?>" required>
+    /* Primary submit */
+    button[type="submit"]{
+      margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;
+      padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s
+    }
+    button[type="submit"]:hover{background:#1ea893}
 
-    <label>Email</label>
-    <input type="email" name="email" value="<?=htmlspecialchars($u['email'])?>" required>
+    /* Action row under the Save button */
+    .actions{
+      display:flex;gap:12px;margin-top:12px;
+    }
+    /* Use unique classes to avoid clashing with navbar .btn */
+    .btn-outline{
+      flex:1; display:inline-block; text-align:center; text-decoration:none;
+      border:2px solid #26c1a8; color:#26c1a8; background:#fff;
+      padding:12px 16px; border-radius:12px; font-weight:700;
+      transition:background .2s, transform .05s;
+    }
+    .btn-outline:hover{background:#e7f8f4}
+    .btn-outline:active{transform:translateY(1px)}
 
-    <label>Phone</label>
-    <input type="text" name="phone" placeholder="+8801xxxxxxxxx" value="<?=htmlspecialchars($u['phone'] ?? '')?>">
+    .btn-orange{
+      flex:1; display:inline-block; text-align:center; text-decoration:none;
+      border:2px solid #ff8552; color:#ff8552; background:#fff;
+      padding:12px 16px; border-radius:12px; font-weight:700;
+      transition:background .2s, transform .05s;
+    }
+    .btn-orange:hover{background:#fff3ee}
+    .btn-orange:active{transform:translateY(1px)}
 
-    <label>Address</label>
-    <input type="text" name="address" placeholder="House, Road, Area, City" value="<?=htmlspecialchars($u['address'] ?? '')?>">
+    .small{color:#777;font-size:.88rem;margin-top:6px;text-align:center}
 
-    <label>Short Bio</label>
-    <textarea name="bio" placeholder="A few lines about you, your pets, experience, or preferences..."><?=htmlspecialchars($u['bio'] ?? '')?></textarea>
+    @media(max-width:520px){
+      .actions{flex-direction:column}
+    }
+  </style>
+</head>
+<body>
+  <?php include_once 'app/views/partials/nav.php'; ?>
 
-    <button type="submit">Save Changes</button>
+  <div class="card">
+    <h2>Edit Profile</h2>
 
-    <div class="actions">
-      <a class="btn" href="<?=BASE_URL?>/User/profile">Cancel</a>
-      <a class="btn" href="<?=BASE_URL?>/Rehome/request">ReHome pet?</a>
-    </div>
+    <form method="POST" action="<?=BASE_URL?>/User/edit">
+      <label>Name</label>
+      <input type="text" name="username" value="<?=htmlspecialchars($u['username'])?>" required>
 
-    <div class="small">Tip: Add your phone & address to speed up adoptions and deliveries.</div>
-  </form>
-</div>
-</body></html>
+      <label>Email</label>
+      <input type="email" name="email" value="<?=htmlspecialchars($u['email'])?>" required>
+
+      <label>Phone</label>
+      <input type="text" name="phone" placeholder="+8801xxxxxxxxx" value="<?=htmlspecialchars($u['phone'] ?? '')?>">
+
+      <label>Address</label>
+      <input type="text" name="address" placeholder="House, Road, Area, City" value="<?=htmlspecialchars($u['address'] ?? '')?>">
+
+      <label>Short Bio</label>
+      <textarea name="bio" placeholder="A few lines about you, your pets, experience, or preferences..."><?=htmlspecialchars($u['bio'] ?? '')?></textarea>
+
+      <!-- Save -->
+      <button type="submit">Save Changes</button>
+
+      <!-- Clearly visible action buttons -->
+      <div class="actions">
+        <a class="btn-outline" href="<?=BASE_URL?>/User/profile">Cancel</a>
+        <a class="btn-orange" href="<?=BASE_URL?>/Rehome/request">ReHome pet?</a>
+      </div>
+
+      <div class="small">Tip: Add your phone & address to speed up adoptions and deliveries.</div>
+    </form>
+  </div>
+</body>
+</html>
 
 
 ===== FILE: app\views\user\login.php =====
@@ -3778,42 +3833,50 @@ a.btn:hover{background:#e7f8f4}
 
 
 ===== FILE: app\views\user\profile.php =====
-<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><title>My Profile • PawCare</title>
-<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;600&display=swap" rel="stylesheet">
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><title>PawCare • My Profile</title>
+<link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@400;700;800&display=swap" rel="stylesheet">
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Quicksand',sans-serif;background:#f0faf6;padding:40px 6%}
-.card{background:#fff;border-radius:16px;box-shadow:0 8px 18px rgba(0,0,0,.08);max-width:880px;margin:100px auto 24px;padding:26px}
-h2{color:#41403e;font-size:1.6rem;font-weight:600;margin-bottom:8px}
-.small{color:#777;font-size:.88rem}
-.avatar{width:88px;height:88px;border-radius:50%;background:#eaf8f5;border:2px solid #d6f2ea;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.6rem;color:#26c1a8;margin-bottom:10px}
-.field{background:#fafafa;border:1px solid #e9e7e6;border-radius:12px;padding:10px 12px;margin-top:12px}
-.label{font-weight:700;color:#41403e;font-size:.9rem}
-.value{color:#555;margin-top:4px;white-space:pre-wrap}
-.bio{white-space:pre-wrap;line-height:1.45;color:#555}
-button.primary{margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s}
-button.primary:hover{background:#1ea893}
-a.link{display:block;text-align:center;margin-top:10px;color:#26c1a8;text-decoration:none;font-weight:700}
-a.link:hover{text-decoration:underline}
-.section-title{margin-top:18px;font-weight:700;color:#41403e}
-.appt-box,.vax-box{margin-top:8px;background:#fff;border:1px solid #e9e7e6;border-radius:12px}
-.row{display:flex;gap:12px;align-items:center;padding:12px;border-top:1px solid #f1efee}
-.row:first-child{border-top:none}
-.when{min-width:160px;color:#1b3f39;font-weight:700}
-.who{color:#445b58}
-.badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem;margin-left:8px}
-.booked{background:#e7f8f4;border:1px solid #bfece1;color:#1b907d}
-.completed{background:#e8eafc;border:1px solid #c7cbff;color:#343a8b}
-.cancelled{background:#ffe6e6;border:1px solid #ffb2b2;color:#9c2a2a}
-.soon{background:#fff3d6;border:1px solid #f5d48a;color:#9b6b00}
-.empty{padding:14px;color:#60706d}
-.actions-row{display:flex;gap:10px;margin-top:10px}
-.btn-outline{display:inline-block;padding:.7rem 1rem;border:2px solid #26c1a8;color:#26c1a8;border-radius:12px;font-weight:700;text-decoration:none;text-align:center;flex:1}
-.btn-outline:hover{background:#eaf8f5}
-.btn-cancel{margin-left:auto;background:#fff;border:2px solid #ff6b6b;color:#ff6b6b;padding:.55rem .8rem;border-radius:10px;font-weight:700;cursor:pointer}
-.btn-cancel:hover{background:#ffefef}
-</style></head><body>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Quicksand',sans-serif;background:#f7fbfa;min-height:100vh}
+  .card{background:#ffffff;border:1px solid #ebe9e7;border-radius:18px;box-shadow:0 10px 25px rgba(0,0,0,.05);
+        max-width:820px;margin:26px auto;padding:18px}
+  .avatar{width:88px;height:88px;border-radius:50%;background:#eaf8f5;border:2px solid #d6f2ea;
+          display:flex;align-items:center;justify-content:center;font-weight:800;font-size:1.6rem;color:#26c1a8;margin-bottom:10px}
+  .small{color:#6b7a78;margin-bottom:6px}
+  .field{background:#fafafa;border:1px solid #e9e7e6;border-radius:12px;padding:10px 12px;margin-top:12px}
+  .label{font-weight:700;color:#41403e;font-size:.9rem}
+  .value{color:#555;margin-top:4px;white-space:pre-wrap}
+  .bio{white-space:pre-wrap;line-height:1.45;color:#555}
+  button.primary{margin-top:16px;background:#26c1a8;color:#fff;border:none;width:100%;
+                 padding:.95rem;font-weight:700;font-size:1rem;border-radius:12px;cursor:pointer;transition:.25s}
+  button.primary:hover{background:#1ea893}
+  a.link{display:block;text-align:center;margin-top:10px;color:#26c1a8;text-decoration:none;font-weight:700}
+  a.link:hover{text-decoration:underline}
+
+  /* Appointments */
+  .section-title{margin-top:18px;font-weight:700;color:#41403e}
+  .appt-box{margin-top:8px;background:#fff;border:1px solid #e9e7e6;border-radius:12px}
+  .appt-row{display:flex;gap:12px;align-items:center;padding:12px;border-top:1px solid #f1efee}
+  .appt-row:first-child{border-top:none}
+  .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:.78rem}
+  .booked{background:#e7f8f4;color:#1b907d;border:1px solid #bfece1}
+  .completed{background:#e8eafc;color:#343a8b;border:1px solid #c7cbff}
+  .cancelled{background:#ffe6e6;color:#9c2a2a;border:1px solid #ffb2b2}
+  .when{min-width:160px;color:#1b3f39;font-weight:700}
+  .who{color:#445b58}
+  .empty{padding:14px;color:#60706d}
+
+  .btn-cancel{margin-left:auto;background:#fff;border:2px solid #ff6b6b;color:#ff6b6b;
+              padding:.55rem .8rem;border-radius:10px;font-weight:700;cursor:pointer}
+  .btn-cancel:hover{background:#ffefef}
+  .actions-row{display:flex;gap:10px;margin-top:10px}
+  .btn-outline{display:inline-block;padding:.7rem 1rem;border:2px solid #26c1a8;color:#26c1a8;border-radius:12px;
+               font-weight:700;text-decoration:none;text-align:center;flex:1}
+  .btn-outline:hover{background:#eaf8f5}
+</style>
+</head><body>
 <?php include_once 'app/views/partials/nav.php'; ?>
 
 <?php
@@ -3851,20 +3914,23 @@ a.link:hover{text-decoration:underline}
     <?php endforeach; endif; ?>
   </div>
 
-  <!-- Upcoming Appointments (existing) -->
+  <!-- Upcoming Appointments -->
   <div class="section-title">Upcoming appointments</div>
   <div class="appt-box">
     <?php if (!empty($apptUpcoming)): ?>
       <?php foreach ($apptUpcoming as $r): ?>
         <?php $d = date('M d, Y', strtotime($r['appt_date'])); $t = date('g:i A', strtotime($r['slot'])); ?>
-        <div class="row">
+        <div class="appt-row">
           <div class="when">🗓️ <?=$d?> • <?=$t?></div>
           <div class="who">with <strong><?=htmlspecialchars($r['vet_name'])?></strong> (<?=htmlspecialchars($r['vet_city'])?>) — for <strong><?=htmlspecialchars($r['pet_name'])?></strong></div>
-          <span class="badge booked" style="margin-left:10px">Booked</span>
-          <form method="post" action="<?=BASE_URL?>/Appointment/cancel" style="margin-left:auto">
-            <input type="hidden" name="id" value="<?=$r['id']?>">
-            <button class="btn-cancel" type="submit" onclick="return confirm('Cancel this appointment?')">Cancel</button>
-          </form>
+          <span class="badge <?=htmlspecialchars(strtolower($r['status']))?>"><?=ucfirst($r['status'])?></span>
+
+          <?php if (strtolower($r['status'])==='booked'): ?>
+            <form method="post" action="<?=BASE_URL?>/Appointment/cancel" style="margin-left:auto">
+              <input type="hidden" name="id" value="<?=$r['id']?>">
+              <button class="btn-cancel" type="submit" onclick="return confirm('Cancel this appointment?')">Cancel</button>
+            </form>
+          <?php endif; ?>
         </div>
       <?php endforeach; ?>
     <?php else: ?>
@@ -3872,13 +3938,15 @@ a.link:hover{text-decoration:underline}
     <?php endif; ?>
   </div>
 
-  <!-- Actions -->
   <div class="actions-row">
     <a class="btn-outline" href="<?=BASE_URL?>/Appointment/index">Book a Vet</a>
-    <a class="btn-outline" href="<?=BASE_URL?>/Vaccination/index">Manage Vaccinations</a>
+    <a class="btn-outline" href="<?=BASE_URL?>/Appointment/history">View All</a>
   </div>
 
-  <form action="<?=BASE_URL?>/User/edit" method="get"><button class="primary" type="submit">Edit Profile</button></form>
+  <form action="<?=BASE_URL?>/User/edit" method="get">
+    <button class="primary" type="submit">Edit Profile</button>
+  </form>
+
   <a class="link" href="<?=BASE_URL?>/Rehome/request">ReHome a pet?</a>
 </div>
 </body></html>

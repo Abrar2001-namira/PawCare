@@ -80,21 +80,28 @@ class AppointmentController extends Controller
         $this->view('appointment/history', ['list'=>$list]);
     }
 
-    /* NEW: cancel from profile/history */
+    /* Cancel from profile/history — accepts POST (preferred) or GET fallback */
     public function cancel()
     {
         if (!isset($_SESSION['user_id'])) { header("Location: ".BASE_URL."/User/login"); exit; }
-        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-            header("Location: ".BASE_URL."/User/profile"); exit;
+
+        // Prefer POST, but allow GET?id=... as a safe fallback so the button always works.
+        $id = 0;
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $id = (int)($_POST['id'] ?? 0);
+        } else {
+            $id = (int)($_GET['id'] ?? 0);
         }
 
-        $id = (int)($_POST['id'] ?? 0);
-        if ($id) {
+        if ($id > 0) {
+            // Model verifies ownership (user_id) and only cancels booked ones.
             $this->model('Appointment')->cancel($id, $_SESSION['user_id']);
-            // As soon as status becomes 'cancelled', the slot disappears from takenSlots(),
-            // so it becomes available for everyone immediately.
+            // After status becomes 'cancelled', takenSlots() won’t include it, so the slot is free immediately.
         }
 
-        header("Location: ".BASE_URL."/User/profile"); exit;
+        // Send the user back where they came from, otherwise to profile.
+        $back = $_SERVER['HTTP_REFERER'] ?? (BASE_URL.'/User/profile');
+        header("Location: ".$back);
+        exit;
     }
 }
